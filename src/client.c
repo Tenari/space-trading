@@ -455,10 +455,12 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   switch (state->screen) {
     case ScreenCreateCharacter: {
       //// SIMULATION
-      state->screen = ScreenMainGame; // TODO change this if you want to actually have character creation
       if (state->me.id != 0) {
         state->screen = ScreenMainGame;
         break;
+      }
+      if (state->section.selected_index == 0) {
+        state->menu.len = ShipType_Count;
       }
 
       if (input_buffer[0] == 'q' || user_pressed_esc) {
@@ -507,6 +509,20 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 
       line++;
       // TODO: game-specific character creation stuff
+      // 3. draw the ship choices
+      str ship_label = "Choose your starting ship:";
+      renderStrToBuffer(tui->frame_buffer, 5, ++line, ship_label, screen_dimensions);
+      line++;
+      renderChoiceMenu(
+        tui,
+        5,
+        line,
+        (ptr*)SHIP_TYPE_STRINGS,
+        ShipType_Count,
+        state->section.selected_index == 0,
+        state->menu.selected_index,
+        NULL
+      );
     } break;
     case ScreenMainGame: {
       // SIMULATION

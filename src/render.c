@@ -6,10 +6,8 @@
 
 fn str charForEntity(EntityType e) {
   switch (e) {
-    case EntityWall:
-      return "# ";
-    case EntityDoor:
-      return "🚪";
+    case EntityStarSystem:
+      return "⭐";
     case EntityCharacter:
       return "🧙";
       //return "웃";
