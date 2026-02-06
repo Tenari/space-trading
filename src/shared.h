@@ -33,12 +33,14 @@ typedef enum ShipType {
   ShipNX400,
   ShipType_Count,
 } ShipType;
-static const char* SHIP_TYPE_STRINGS[] = {
+global str SHIP_TYPE_STRINGS[] = {
   "Sparrow",
   "Dart",
   "Hauler-Prime Z-1",
   "NX-400",
 };
+
+#define SHIP_DETAIL_COUNT (8)
 typedef struct ShipTemplate {
   ShipType type;
   u8 drive_efficiency;
@@ -75,6 +77,39 @@ global ShipTemplate SHIPS[] = {
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 350000,
   },
+};
+
+typedef enum {
+  FieldTypeU8,
+  FieldTypeU16,
+  FieldTypeU32,
+  FieldTypeFloat,
+  FieldTypeString,
+  FieldTypeEnum,
+  FieldType_Count,
+} FieldType;
+
+typedef struct FieldDescriptor {
+  str name;
+  FieldType type;
+  size_t offset;
+  int width;  // column width for display
+  str* enum_vals;
+} FieldDescriptor;
+
+// Define field metadata using offsetof
+#define offsetof(st, m) ((size_t)&(((st*)0)->m))
+
+// Field descriptors for Employee
+global FieldDescriptor SHIP_FIELDS[SHIP_DETAIL_COUNT] = {
+  { "Type", FieldTypeEnum, offsetof(ShipTemplate, type), 16, (str*)&SHIP_TYPE_STRINGS },
+  { "Cost", FieldTypeU32, offsetof(ShipTemplate, base_cost), 8 },
+  { "DriveEff", FieldTypeU8, offsetof(ShipTemplate, drive_efficiency), 8 },
+  { "LifeSupp", FieldTypeU8, offsetof(ShipTemplate, life_support_efficiency), 8 },
+  { "V.Cargo", FieldTypeU16, offsetof(ShipTemplate, vacuum_cargo_slots), 7 },
+  { "C.Cargo", FieldTypeU16, offsetof(ShipTemplate, climate_cargo_slots), 7 },
+  { "Passengers", FieldTypeU16, offsetof(ShipTemplate, passenger_berths), 10 },
+  { "SmugglersHold", FieldTypeU16, offsetof(ShipTemplate, smugglers_hold_cu_m), 13 },
 };
 
 typedef struct PlayerShip {

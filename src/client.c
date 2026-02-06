@@ -492,7 +492,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           state->screen = ScreenMainGame;
         }
       }
-
       if (state->menu.selected_index >= state->menu.len) {
         state->menu.selected_index = 0;
       }
@@ -511,6 +510,52 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       // TODO: game-specific character creation stuff
       // 3. draw the ship choices
       str ship_label = "Choose your starting ship:";
+      line++;
+      // the table
+      str cols[SHIP_DETAIL_COUNT] = {"Type", "Cost", "DriveEff", "LifeSupp", "V.Cargo", "C.Cargo", "Passengers", "SmugglersHold"};
+      u32 table_x = 5;
+      u32 table_col_pad = 1;
+      // render the headers
+      u32 col_x_pos = 0;
+      for (u32 i = 0; i < SHIP_DETAIL_COUNT; col_x_pos += SHIP_FIELDS[i].width+table_col_pad, i++) {
+        renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, cols[i], screen_dimensions);
+        for (u32 ii = 0; ii < SHIP_FIELDS[i].width; ii++) {
+          renderUtf8CharToBuffer(tui->frame_buffer, table_x+col_x_pos+ii, line+1, "━", screen_dimensions);
+        }
+      }
+      line++;
+      line++;
+      // render the columns
+      char tmp_buffer[32] = {0};
+      for (u32 i = 0; i < ShipType_Count; line++, i++) {
+        col_x_pos = 0;
+        ShipTemplate ship = SHIPS[i];
+        for (u32 ii = 0; ii < SHIP_DETAIL_COUNT; col_x_pos += SHIP_FIELDS[ii].width+table_col_pad, ii++) {
+          FieldDescriptor details = SHIP_FIELDS[ii];
+          void *field_ptr = (char *)&ship + details.offset;
+          switch (details.type) {
+            case FieldTypeEnum: {
+              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, details.enum_vals[ship.type], screen_dimensions);
+            } break;
+            case FieldTypeU8: {
+              MemoryZero(tmp_buffer, 32);
+              sprintf(tmp_buffer, "%d", *(u8 *)field_ptr);
+              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
+            } break;
+            case FieldTypeU16: {
+              MemoryZero(tmp_buffer, 32);
+              sprintf(tmp_buffer, "%d", *(u16 *)field_ptr);
+              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
+            } break;
+            case FieldTypeU32: {
+              MemoryZero(tmp_buffer, 32);
+              sprintf(tmp_buffer, "%d", *(u32 *)field_ptr);
+              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
+            } break;
+          }
+        }
+      }
+      /*
       renderStrToBuffer(tui->frame_buffer, 5, ++line, ship_label, screen_dimensions);
       line++;
       renderChoiceMenu(
@@ -523,6 +568,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         state->menu.selected_index,
         NULL
       );
+      */
     } break;
     case ScreenMainGame: {
       // SIMULATION
