@@ -505,32 +505,44 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       // 2. draw the header label
       str label = "Create Character";
       renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(label)+4))/2, ++line, label, screen_dimensions);
-
       line++;
-      // TODO: game-specific character creation stuff
+
       // 3. draw the ship choices
       str ship_label = "Choose your starting ship:";
+      renderStrToBuffer(tui->frame_buffer, 8, ++line, ship_label, screen_dimensions);
+      line++;
+      str ship_desc = "You have 10,000 credits to use as a down-payment on a ship.";
+      renderStrToBuffer(tui->frame_buffer, 6, ++line, ship_desc, screen_dimensions);
+      line++;
       line++;
       // the table
-      str cols[SHIP_DETAIL_COUNT] = {"Type", "Cost", "DriveEff", "LifeSupp", "V.Cargo", "C.Cargo", "Passengers", "SmugglersHold"};
       u32 table_x = 5;
       u32 table_col_pad = 1;
       // render the headers
       u32 col_x_pos = 0;
       for (u32 i = 0; i < SHIP_DETAIL_COUNT; col_x_pos += SHIP_FIELDS[i].width+table_col_pad, i++) {
-        renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, cols[i], screen_dimensions);
+        renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, SHIP_FIELDS[i].name, screen_dimensions);
         for (u32 ii = 0; ii < SHIP_FIELDS[i].width; ii++) {
           renderUtf8CharToBuffer(tui->frame_buffer, table_x+col_x_pos+ii, line+1, "━", screen_dimensions);
         }
       }
       line++;
       line++;
-      // render the columns
+      // render the rows
       char tmp_buffer[32] = {0};
       for (u32 i = 0; i < ShipType_Count; line++, i++) {
         col_x_pos = 0;
         ShipTemplate ship = SHIPS[i];
+        // render the columns
         for (u32 ii = 0; ii < SHIP_DETAIL_COUNT; col_x_pos += SHIP_FIELDS[ii].width+table_col_pad, ii++) {
+          if (i == state->menu.selected_index) {
+            for (u32 iii = 0; iii < SHIP_FIELDS[ii].width+table_col_pad; iii++) {
+              u32 pos = XYToPos(table_x+col_x_pos+iii, line, screen_dimensions.width);
+              tui->frame_buffer[pos].background = ANSI_WHITE;
+              tui->frame_buffer[pos].foreground = ANSI_BLACK;
+              tui->frame_buffer[pos].bytes[0] = ' ';
+            }
+          }
           FieldDescriptor details = SHIP_FIELDS[ii];
           void *field_ptr = (char *)&ship + details.offset;
           switch (details.type) {
