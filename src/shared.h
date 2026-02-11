@@ -5,7 +5,7 @@
 #define GAMESHARED_H
 
 ///// #define some game-tunable constants
-#define GAME_CONSTANT_ONE (1)
+#define STARTING_DOWN_PAYMENT (10000)
 #define GAME_CONSTANT_TWO (2)
 
 typedef enum EntityFeature {
@@ -79,6 +79,11 @@ global ShipTemplate SHIPS[] = {
   },
 };
 
+fn f32 calcInterestRate(u32 cost, u32 down_payment) {
+  f32 mortgage_rate = 10.0 *(1.0 - (3.0*(f32)down_payment / ((f32)cost/3.0)));
+  return mortgage_rate;
+}
+
 typedef enum {
   FieldTypeU8,
   FieldTypeU16,
@@ -98,7 +103,9 @@ typedef struct FieldDescriptor {
 } FieldDescriptor;
 
 // Define field metadata using offsetof
+#ifndef offsetof
 #define offsetof(st, m) ((size_t)&(((st*)0)->m))
+#endif
 
 // Field descriptors for Employee
 global FieldDescriptor SHIP_FIELDS[SHIP_DETAIL_COUNT] = {

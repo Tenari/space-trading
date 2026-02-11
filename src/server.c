@@ -31,7 +31,7 @@
 #define GOAL_GAME_LOOP_US 1000000/GOAL_GAME_LOOPS_PER_S
 #define CLIENT_TIMEOUT_FRAMES GOAL_GAME_LOOPS_PER_S*3
 #define CHUNK_SIZE 64
-#define ACCOUNT_CHUNK_SIZE 64
+#define ACCOUNT_LEN (16)
 #define PARSED_CLIENT_COMMAND_THREAD_QUEUE_LEN 64
 
 ///// TypeDefs
@@ -69,18 +69,11 @@ typedef struct Entity {
 } Entity;
 
 typedef struct Account {
-  u64 id;
+  u32 id; // the index in the array
   String name;
   String pw;
-  u64 eid;
+  PlayerShip ship;
 } Account;
-
-typedef struct AccountChunk {
-  u64 length; // the currently used # of accounts in this chunk
-  u64 capacity; // the "chunk size" / space in this chunk
-  struct AccountChunk* next; // the next chunk
-  Account* items; // the actual accounts
-} AccountChunk;
 
 typedef struct EntityList {
   u64 length; // the currently used length
@@ -105,7 +98,6 @@ typedef struct ChunkedEntityList {
 typedef struct Client {
   u16 lan_port;
   i32 lan_ip;
-  u64 character_eid;
   u64 account_id;
   SocketAddress address;
   CommandType commands[CLIENT_COMMAND_LIST_LEN];
@@ -123,7 +115,7 @@ typedef struct State {
   Mutex mutex;
   ClientList clients;
   u64 next_eid;
-  AccountChunk accounts;
+  Account accounts[ACCOUNT_LEN];
   u64 frame;
   Arena game_scratch;
   StringArena string_arena;
@@ -220,68 +212,12 @@ fn u64 entityFeaturesFromType(EntityType type) {
   return result;
 }
 
-fn Account* findAccountById(u64 id) {
-  AccountChunk* current = &state.accounts;
-  while (current != NULL) {
-    for (u32 i = 0; i < current->length; i++) {
-      if (current->items[i].id == id) {
-        return &current->items[i];
-      }
-    }
-    current = current->next;
-  }
-  return NULL;
-}
-
-fn Account* findAccountByEId(u64 id) {
-  AccountChunk* current = &state.accounts;
-  while (current != NULL) {
-    for (u32 i = 0; i < current->length; i++) {
-      if (current->items[i].eid == id) {
-        return &current->items[i];
-      }
-    }
-    current = current->next;
-  }
-  return NULL;
-}
-
 fn Account* findAccountByName(String name) {
-  AccountChunk* current = &state.accounts;
-  while (current != NULL) {
-    for (u32 i = 0; i < current->length; i++) {
-      if (stringsEq(&current->items[i].name, &name)) {
-        return &current->items[i];
-      }
+  for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+    if (stringsEq(&state.accounts[i].name, &name)) {
+      return &state.accounts[i];
     }
-    current = current->next;
   }
-  return NULL;
-}
-
-fn Account* newAccount(Arena* a, Account details) {
-  u64 id = 0;
-  AccountChunk* current = &state.accounts;
-  while (current != NULL) {
-    id += current->length;
-    if (current->length < current->capacity) {
-      Account* result = &current->items[current->length];
-      *result = details;
-      result->id = id;
-      current->length += 1;
-      printf("new account created id=%lld\n", id);
-      return result;
-    }
-    if (current->next == NULL) {
-      // alloc next chunk of accounts
-      AccountChunk* next = arenaAlloc(a, sizeof(AccountChunk));
-      next->capacity = ACCOUNT_CHUNK_SIZE;
-      next->items = arenaAllocArray(a, Account, next->capacity);
-      current->next = next;
-    }
-    current = current->next;
-  }
-  assert(false); // never should be reached
   return NULL;
 }
 
@@ -384,7 +320,7 @@ fn u32 pushClient(ClientList* clients, SocketAddress addr) {
 
   // first, try to overwrite an old dc'ed client
   for (u32 i = 1; i < clients->length; i++) {
-    if (clients->items[i].character_eid == 0) {
+    if (clients->items[i].last_ping == 0) {
       clients->items[i] = new_client;
       return i;
     }
@@ -398,12 +334,12 @@ fn u32 pushClient(ClientList* clients, SocketAddress addr) {
   return result;
 }
 
-fn bool deleteClientByEId(ClientList* clients, u64 id) {
+fn bool deleteClientByAccountId(ClientList* clients, u64 id) {
   bool succeeded = false;
   Client blank_client = {0};
   // i=1 because first client is null-client
   for (u32 i = 1; i < clients->length && !succeeded; i++) {
-    if (clients->items[i].character_eid == id) {
+    if (clients->items[i].account_id == id) {
       clients->items[i] = blank_client;
       succeeded = true;
     }
@@ -411,10 +347,10 @@ fn bool deleteClientByEId(ClientList* clients, u64 id) {
   return succeeded;
 }
 
-fn u32 findClientHandleByEId(ClientList* clients, u64 id) {
+fn u32 findClientHandleByAccountId(ClientList* clients, u64 id) {
   for (u32 i = 0; i < clients->length; i++) {
     Client c = clients->items[i];
-    if (c.character_eid == id) {
+    if (c.account_id == id) {
       return i;
     }
   }
@@ -533,9 +469,9 @@ fn void* sendNetworkUpdates(void* sock) {
           memset(&state.clients.items[i], 0, sizeof(Client));
           continue;
         }
-        if (client.character_eid == 0) {
-          continue; // they are still creating their character
-        }
+        //if (client.character_eid == 0) {
+        //  continue; // they are still creating their character
+        //}
 
       }
     } unlockMutex(&state.client_mutex);
@@ -631,20 +567,20 @@ fn void* gameLoop(void* params) {
                 break;
               }
             } else {
-              Account new_account = {
-                .eid = 0,
-                .name = name,
-                .pw = pw,
-              };
-              existing_account = newAccount(&permanent_arena, new_account);
+              for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+                if (state.accounts[i].id == 0 && state.accounts[i].name.length == 0) {
+                  existing_account = &state.accounts[i];
+                  existing_account->id = i;
+                }
+              }
+              existing_account->name = name;
+              existing_account->pw = pw;
             }
             client->account_id = existing_account->id;
-            if (existing_account->eid != 0) {
-              client->character_eid = existing_account->eid;
-
-              // tell the client their character id
+            if (existing_account->ship.id != 0) {
+              // tell the client their account id
               outgoing_message.bytes[0] = (u8)MessageCharacterId;
-              writeU64ToBufferLE(outgoing_message.bytes + 1, existing_account->eid);
+              writeU64ToBufferLE(outgoing_message.bytes + 1, existing_account->id);
               outgoing_message.bytes_len = 9;
               outgoing_message.address = sender;
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
@@ -657,30 +593,36 @@ fn void* gameLoop(void* params) {
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               printf("MessageNewAccountCreated sent\n");
             }
-            printf("eid=%lld, client_handle=%d, acct_id=%lld\n", existing_account->eid, client_handle, existing_account->id);
+            printf("client_handle=%d, acct_id=%d\n", client_handle, existing_account->id);
           } break;
           case CommandCreateCharacter: {
-            if (client->character_eid == 0) {
-              // Create new character
-              XYZ room_xyz = {0, 0, 0 };
-              Entity character = {
-                .type = EntityCharacter,
-                .id = state.next_eid++,
-                .changed = true,
-                .features = entityFeaturesFromType(EntityCharacter),
-                .color = msg.byte,
+            Account account = state.accounts[client->account_id];
+            if (account.ship.id == 0) {
+              ShipTemplate template = SHIPS[msg.byte];
+              PlayerShip player_ship = {
+                .type = msg.byte,
+                .drive_efficiency = template.drive_efficiency,
+                .life_support_efficiency = template.life_support_efficiency,
+                .vacuum_cargo_slots = template.vacuum_cargo_slots,
+                .climate_cargo_slots = template.climate_cargo_slots,
+                .passenger_berths = template.passenger_berths,
+                .passenger_amenities_flags = template.passenger_amenities_flags,
+                .smugglers_hold_cu_m = template.smugglers_hold_cu_m,
+                .base_cost = template.base_cost,
+                .remaining_mortgage = template.base_cost - STARTING_DOWN_PAYMENT,
+                .interest_rate = calcInterestRate(template.base_cost, STARTING_DOWN_PAYMENT),
+                //.cu_m_fuel; // we are just saying you can buy as much fuel as you want
+                //.cu_m_o2; // we are just saying you can buy as much o2 as you want
+                .id = ++state.next_eid, // start from 1
               };
-              dbg("made new character id=%ld\n", character.id);
-              client->character_eid = character.id;
-              Account* account = findAccountById(client->account_id);
-              account->eid = character.id;
-              printf("character_eid=%lld, client_handle=%d, acct_id=%lld\n", account->eid, client_handle, account->id);
+              account.ship = player_ship;
+              printf("ship_type=%s, client_handle=%d, acct_id=%d\n", SHIP_TYPE_STRINGS[msg.byte], client_handle, account.id);
 
-              // tell the client their character id
+              // tell the client their account id
               outgoing_message.address = sender;
               outgoing_message.bytes_len = 9;
               outgoing_message.bytes[0] = (u8)MessageCharacterId;
-              writeU64ToBufferLE(outgoing_message.bytes + 1, character.id);
+              writeU64ToBufferLE(outgoing_message.bytes + 1, account.id);
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               printf("MessageCharacterId sent\n");
             } else {
@@ -753,8 +695,6 @@ i32 main(i32 argc, ptr argv[]) {
   state.clients.capacity = SERVER_MAX_CLIENTS;
   state.clients.length = 1; // making entry 0 to be a "null" client 
   state.clients.items = (Client*)arenaAllocArray(&permanent_arena, Client, SERVER_MAX_CLIENTS);
-  state.accounts.capacity = ACCOUNT_CHUNK_SIZE;
-  state.accounts.items = arenaAllocArray(&permanent_arena, Account, ACCOUNT_CHUNK_SIZE);
 
   // 2. spin off sendNetworkUpdates() infinite loop thread
   UDPServer listener = createUDPServer(SERVER_PORT);

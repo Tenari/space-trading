@@ -7,6 +7,7 @@
  *  MY_CONSTANT
  * */
 #include <string.h>
+#include <math.h>
 #include "base/impl.c"
 #include "lib/network.c"
 #include "render.c"
@@ -472,31 +473,25 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       } else if (user_pressed_a_number) {
         state->menu.selected_index = input_buffer[0] - '1';
       } else if (input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED) {
-        if (state->section.selected_index == 0) {
-          state->choices[0] = state->menu.selected_index;
-          state->section.selected_index += 1;
-          state->menu.selected_index = 0;
-          state->menu.len = 2;
-        } else {
-          // send character color to server
-          UDPMessage msg = {0};
-          msg.address = udp->server_address;
-          msg.bytes_len = 2;
-          // 1. msg type/CommandType
-          msg.bytes[0] = CommandCreateCharacter;
-          // 2. what color
-          msg.bytes[1] = ANSI_HP_RED;//WIZARD_COLORS[state->choices[0]];
+        // send character ship details to server
+        UDPMessage msg = {0};
+        msg.address = udp->server_address;
+        msg.bytes_len = 2;
+        // 1. msg type/CommandType
+        msg.bytes[0] = CommandCreateCharacter;
+        // 2. chosen ShipType
+        msg.bytes[1] = SHIPS[state->menu.selected_index].type;
 
-          outgoingMessageQueuePush(network_send_queue, &msg);
+        outgoingMessageQueuePush(network_send_queue, &msg);
 
-          state->screen = ScreenMainGame;
-        }
+        state->screen = ScreenMainGame;
       }
       if (state->menu.selected_index >= state->menu.len) {
         state->menu.selected_index = 0;
       }
 
       //// RENDERING
+      char tmp_buffer[64] = {0};
       u16 line = 2;
       // 1. draw the outline
       Box b = { .x = 2, .y = line, .width = screen_dimensions.width - 5, .height = screen_dimensions.height - 5 };
@@ -513,7 +508,15 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       line++;
       str ship_desc = "You have 10,000 credits to use as a down-payment on a ship.";
       renderStrToBuffer(tui->frame_buffer, 6, ++line, ship_desc, screen_dimensions);
-      line++;
+      u32 selected_ship_cost = SHIPS[state->menu.selected_index].base_cost;
+      u32 principal_borrowed = selected_ship_cost - STARTING_DOWN_PAYMENT;
+      f32 mortgage_rate = calcInterestRate(selected_ship_cost, STARTING_DOWN_PAYMENT);
+      f32 r = mortgage_rate / 100.0;
+      f32 rm = r / 12.0;
+      u32 n = 12 * 4;
+      u32 payment = principal_borrowed * (rm*pow((1.0+rm),n))/(pow((1+rm),n) - 1);
+      sprintf(tmp_buffer, "Mortgage: $%d @ %f%% = $%d minimum payment per turn", selected_ship_cost - STARTING_DOWN_PAYMENT, mortgage_rate, payment);
+      renderStrToBuffer(tui->frame_buffer, 5, ++line, tmp_buffer, screen_dimensions);
       line++;
       // the table
       u32 table_x = 5;
@@ -529,7 +532,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       line++;
       line++;
       // render the rows
-      char tmp_buffer[32] = {0};
       for (u32 i = 0; i < ShipType_Count; line++, i++) {
         col_x_pos = 0;
         ShipTemplate ship = SHIPS[i];
@@ -545,42 +547,35 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
           FieldDescriptor details = SHIP_FIELDS[ii];
           void *field_ptr = (char *)&ship + details.offset;
+          MemoryZero(tmp_buffer, 64);
           switch (details.type) {
             case FieldTypeEnum: {
               renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, details.enum_vals[ship.type], screen_dimensions);
             } break;
             case FieldTypeU8: {
-              MemoryZero(tmp_buffer, 32);
               sprintf(tmp_buffer, "%d", *(u8 *)field_ptr);
               renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
             } break;
             case FieldTypeU16: {
-              MemoryZero(tmp_buffer, 32);
               sprintf(tmp_buffer, "%d", *(u16 *)field_ptr);
               renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
             } break;
             case FieldTypeU32: {
-              MemoryZero(tmp_buffer, 32);
               sprintf(tmp_buffer, "%d", *(u32 *)field_ptr);
               renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
             } break;
+            case FieldTypeFloat: {
+              sprintf(tmp_buffer, "%f", *(f32 *)field_ptr);
+              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
+            } break;
+            case FieldTypeString: {
+              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, (ptr)field_ptr, screen_dimensions);
+            } break;
+            case FieldType_Count:
+              break;
           }
         }
       }
-      /*
-      renderStrToBuffer(tui->frame_buffer, 5, ++line, ship_label, screen_dimensions);
-      line++;
-      renderChoiceMenu(
-        tui,
-        5,
-        line,
-        (ptr*)SHIP_TYPE_STRINGS,
-        ShipType_Count,
-        state->section.selected_index == 0,
-        state->menu.selected_index,
-        NULL
-      );
-      */
     } break;
     case ScreenMainGame: {
       // SIMULATION
