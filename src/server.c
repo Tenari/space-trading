@@ -121,6 +121,7 @@ typedef struct State {
   StringArena string_arena;
   ParsedClientCommandThreadQueue* network_recv_queue;
   OutgoingMessageQueue* network_send_queue;
+  StarSystem map[STAR_SYSTEM_COUNT];
 } State;
 
 ///// Global Variables
@@ -695,6 +696,48 @@ i32 main(i32 argc, ptr argv[]) {
   state.clients.capacity = SERVER_MAX_CLIENTS;
   state.clients.length = 1; // making entry 0 to be a "null" client 
   state.clients.items = (Client*)arenaAllocArray(&permanent_arena, Client, SERVER_MAX_CLIENTS);
+  // set position of all star systems
+  for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+    state.map[i].name = STAR_NAMES[i];
+    state.map[i].crime = rand() % 100;
+    state.map[i].x = rand() % MAP_WIDTH;
+    state.map[i].y = rand() % MAP_HEIGHT;
+    bool conflicting_pos = false;
+    for (u32 ii = 0; ii < i; ii++) {
+      if (state.map[ii].x == state.map[i].x && state.map[ii].y == state.map[i].y) {
+        conflicting_pos = true;
+      } 
+    }
+    if (conflicting_pos) {
+      i--;
+    }
+  }
+  for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+    u32 planet_count = rand() % MAX_PLANETS + 1;
+    for (u32 ii = 0; ii < planet_count; ii++) {
+      state.map[i].planets[ii].type = (PlanetType)(rand() % PlanetType_Count);
+      switch (state.map[i].planets[ii].type) {
+        case PlanetTypeEarth: {
+          // TODO: roll the initial commodity counts
+          //  AND roll the initial (excess) production levels
+          //  earth planets do a lot of food 
+        } break;
+        case PlanetTypeGas: {
+          // a lot of fuel and chemicals
+        } break;
+        case PlanetTypeMoon: {
+          // a lot of manufactured goods
+        } break;
+        case PlanetTypeAsteroid: {
+          // a lot of raw metals
+        } break;
+        case PlanetTypeStation: {
+          // a lot of ??? drugs?
+        } break;
+        case PlanetType_Count: {} break;
+      }
+    }
+  }
 
   // 2. spin off sendNetworkUpdates() infinite loop thread
   UDPServer listener = createUDPServer(SERVER_PORT);

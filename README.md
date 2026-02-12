@@ -45,6 +45,9 @@ space-trader-multiplayer-boardgame-esque:
 - players can trade with each other while at the same station
 - certain stations have shipyards, with mortgages available for trade-in/upgrading ships drives/storage capacity, etc.
 - all systems have a safety rating, indicating likelyhood of piracy. High risk systems often have higher profitablilty
+    - "safe" stations have high risk of being inspected for illegal goods
+    - "criminal" stations have high risk of piracy
+    - but it's always a dice roll that some event happens at all when you arrive in system.
 - AI station trading agent for haggling deal-making?
 - transport contracts available at stations randomly.
 - in a system, you can fly out to the asteroid belt and try to buy from miners directly, but it's a gamble on even finding any of them.

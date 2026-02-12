@@ -6,7 +6,10 @@
 
 ///// #define some game-tunable constants
 #define STARTING_DOWN_PAYMENT (10000)
-#define GAME_CONSTANT_TWO (2)
+#define STAR_SYSTEM_COUNT (40)
+#define MAP_WIDTH (40)
+#define MAP_HEIGHT (10)
+#define MAX_PLANETS (16)
 
 typedef enum EntityFeature {
   FeatureWalksAround,
@@ -52,6 +55,7 @@ typedef struct ShipTemplate {
   u16 smugglers_hold_cu_m;
   u32 base_cost;
 } ShipTemplate;
+
 global ShipTemplate SHIPS[] = {
   {
     .type = ShipSparrow, .drive_efficiency = 1, .life_support_efficiency = 2,
@@ -136,107 +140,121 @@ typedef struct PlayerShip {
   u64 id;
 } PlayerShip;
 
+typedef enum EquipmentType {
+  EquipmentTypeAquaponicsSystem,
+  EquipmentType3DPrinter,
+  EquipmentTypeAutoTailor,
+  EquipmentType_Count,
+} EquipmentType;
+
 typedef enum CommodityType {
-  CommodityNull,
   CommodityHydrogenFuel,
   CommodityOxygen,
   CommodityWater,
-  CommodityWheat,
-  CommodityRice,
-  CommodityCorn,
-  CommodityPotatoes,
-  CommodityBeef,
-  CommodityChicken,
-  CommodityButter,
-  CommodityOliveOil,
-  CommodityLiquor,
-  CommodityBeer,
-  CommodityFertilizer,
-  CommodityCleaningSupplies,
-  CommodityAirFilters,
-  CommodityIndustrialChemicals,
+  CommodityGrain,
+  CommodityMeat,
+  CommoditySpices,
+  CommodityAlcohol,
   CommodityClothes,
   CommodityRawTextiles,
-  CommodityElectronics,
-  CommodityConstructionParts,
-  Commodity3dPrinterParts,
-  CommodityHandTools,
-  CommodityCutlery,
-  CommodityRobots,
-  CommodityPlastics,
-  CommodityHandWeapons,
-  CommodityBatteries,
-  CommoditySolarPanels,
-  CommodityMedicines,
-  CommodityOpticalComponents,
-  CommodityGlass,
-  CommodityLithium,
-  CommodityBerylium,
-  CommodityMagnesium,
-  CommodityAluminium,
-  CommoditySilicon,
-  CommodityScandium,
-  CommodityTitanium,
-  CommodityVanadium,
-  CommodityChromium,
-  CommodityManganese,
-  CommodityIron,
-  CommodityCobalt,
-  CommodityNickel,
-  CommodityCopper,
-  CommodityZinc,
-  CommoditySelenium,
-  CommodityZirconium,
-  CommodityMolybdenum,
-  CommodityRuthenium,
-  CommodityRhodium,
-  CommodityPalladium,
-  CommoditySilver,
-  CommodityCadmium,
-  CommodityTin,
-  CommodityTungsten,
-  CommodityRhenium,
-  CommodityIridium,
-  CommodityPlatinum,
-  CommodityGold,
-  CommodityMercury,
-  CommodityLead,
+  //CommodityWheat,
+  //CommodityRice,
+  //CommodityCorn,
+  //CommodityPotatoes,
+  //CommodityBeef,
+  //CommodityChicken,
+  //CommodityButter,
+  //CommodityOliveOil,
+  //CommodityLiquor,
+  //CommodityBeer,
+  //CommodityFertilizer,
+  //CommodityCleaningSupplies,
+  //CommodityAirFilters,
+  //CommodityIndustrialChemicals,
+  //CommodityElectronics,
+  //CommodityConstructionParts,
+  //Commodity3dPrinterParts,
+  //CommodityHandTools,
+  //CommodityCutlery,
+  //CommodityRobots,
+  //CommodityPlastics,
+  //CommodityHandWeapons,
+  //CommodityBatteries,
+  //CommoditySolarPanels,
+  //CommodityMedicines,
+  //CommodityOpticalComponents,
+  //CommodityGlass,
+  //CommodityLithium,
+  //CommodityBerylium,
+  //CommodityMagnesium,
+  //CommodityAluminium,
+  //CommoditySilicon,
+  //CommodityScandium,
+  //CommodityTitanium,
+  //CommodityVanadium,
+  //CommodityChromium,
+  //CommodityManganese,
+  //CommodityIron,
+  //CommodityCobalt,
+  //CommodityNickel,
+  //CommodityCopper,
+  //CommodityZinc,
+  //CommoditySelenium,
+  //CommodityZirconium,
+  //CommodityMolybdenum,
+  //CommodityRuthenium,
+  //CommodityRhodium,
+  //CommodityPalladium,
+  //CommoditySilver,
+  //CommodityCadmium,
+  //CommodityTin,
+  //CommodityTungsten,
+  //CommodityRhenium,
+  //CommodityIridium,
+  //CommodityPlatinum,
+  //CommodityGold,
+  //CommodityMercury,
+  //CommodityLead,
   Commodity_Count,
 } CommodityType;
+
 static const char* COMMODITY_STRINGS[] = {
-  "NULL",
   "Hydrogen Fuel",
   "Oxygen",
   "Water",
-  "Wheat",
-  "Rice",
-  "Corn",
-  "Potatoes",
-  "Beef",
-  "Chicken",
-  "Butter",
-  "Olive Oil",
-  "Liquor",
-  "Beer",
-  "Fertilizer",
-  "Cleaning Supplies",
-  "Air Filters",
-  "Industrial Chemicals",
+  "Grain",
+  "Meat",
+  "Spices",
+  "Alcohol",
   "Clothes",
   "Raw Textiles",
-  "Electronics",
-  "Construction Parts",
-  "3d Printer Parts",
-  "Hand Tools",
-  "Cutlery",
-  "Robots",
-  "Plastics",
-  "Hand Weapons",
-  "Batteries",
-  "Solar Panels",
-  "Medicines",
-  "Optical Components",
-  "Glass",
+  //"Wheat",
+  //"Rice",
+  //"Corn",
+  //"Potatoes",
+  //"Beef",
+  //"Chicken",
+  //"Butter",
+  //"Olive Oil",
+  //"Liquor",
+  //"Beer",
+  //"Fertilizer",
+  //"Cleaning Supplies",
+  //"Air Filters",
+  //"Industrial Chemicals",
+  //"Electronics",
+  //"Construction Parts",
+  //"3d Printer Parts",
+  //"Hand Tools",
+  //"Cutlery",
+  //"Robots",
+  //"Plastics",
+  //"Hand Weapons",
+  //"Batteries",
+  //"Solar Panels",
+  //"Medicines",
+  //"Optical Components",
+  //"Glass",
 };
 
 typedef struct Commodity {
@@ -247,16 +265,71 @@ typedef struct Commodity {
   u32 m3_per_kg;
 } Commodity;
 
-typedef struct StarSystem {
-  StringChunkList name;
-} StarSystem;
+typedef enum PlanetType {
+  PlanetTypeEarth,
+  PlanetTypeGas,
+  PlanetTypeMoon,
+  PlanetTypeAsteroid,
+  PlanetTypeStation,
+  PlanetType_Count,
+} PlanetType;
 
 typedef struct Planet {
-  StringChunkList name;
-  bool habitable;
-  u32 population;
+  PlanetType type;
   u32 commodities[Commodity_Count];
+  u32 production[Commodity_Count];
 } Planet;
+
+typedef struct StarSystem {
+  u32 x;
+  u32 y;
+  u32 crime;
+  str name;
+  Planet planets[MAX_PLANETS];
+} StarSystem;
+
+global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
+  "Achernar",
+  "Aldebaran",
+  "Mining Colony 17",
+  "Antares",
+  "Arcturus",
+  "Barnard's Star",
+  "Betelgeuse",
+  "Canopus",
+  "Capella",
+  "Castor",
+  "Centauri Prime",
+  "Deneb",
+  "Epsilon Eridani",
+  "Fomalhaut",
+  "Gliese 581",
+  "Hadar",
+  "Izar",
+  "Kepler-186",
+  "Lacaille 8760",
+  "Lalande 21185",
+  "Mintaka",
+  "Mirach",
+  "Polaris",
+  "Pollux",
+  "Procyon",
+  "Proxima",
+  "Regulus",
+  "Rigel",
+  "Ross 154",
+  "Sirius",
+  "Spica",
+  "Tau Ceti",
+  "Trappist-1",
+  "Vega",
+  "Wolf 359",
+  "Zeta Reticuli",
+  "Alnitak",
+  "Bellatrix",
+  "Denebola",
+  "Eltanin",
+};
 
 typedef struct {
   i32 x;
