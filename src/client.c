@@ -23,9 +23,17 @@
 #define GOAL_LOOP_US 1000000/GOAL_LOOPS_PER_S
 #define LOGIN_NAME_BUFFER_LEN 16
 #define PARSED_SERVER_MESSAGE_THREAD_QUEUE_LEN 16
-#define MAIN_GAME_TAB_COUNT (2)
 
 ///// TYPES
+typedef enum Tab {
+  TabDebug,
+  TabChat,
+  TabMap,
+  TabShip,
+  TabStation,
+  Tab_Count,
+} Tab;
+
 typedef enum Screen {
   ScreenLogin,
   ScreenCreateCharacter,
@@ -75,6 +83,8 @@ typedef struct ParsedServerMessage {
   u64 id;
   u64 server_frame;
   XYZ xyz;
+  Pos2u8 positions[STAR_SYSTEM_COUNT];
+  PlanetType planet_types[MAX_PLANETS*STAR_SYSTEM_COUNT];
   //Entity entities[PARSED_CLIENT_ENTITY_LEN];
   //u64 ids[PARSED_IDS_LEN];
 } ParsedServerMessage;
@@ -115,10 +125,11 @@ typedef struct GameState {
   LoginState login_state;
   MenuState menu;
   MenuState section; // for tabbing through selected "portions" of the screen
-  u8 choices[4];
   UDPMessage keep_alive_msg;
   UDPClient client;
   StringChunkList message_input;
+  StarSystem map[STAR_SYSTEM_COUNT];
+  Pos2 pos;
 } GameState;
 
 ///// GLOBALS
@@ -130,7 +141,7 @@ global u8 system_message_index = 0;
 global GameState state = {0};
 global OutgoingMessageQueue* network_send_queue = {0};
 global ParsedServerMessageThreadQueue* network_recv_queue = {0};
-global str TABS[] = {"Debug", "Speak"};
+global str TAB_STRS[Tab_Count] = {"Debug", "Chat", "Map", "Ship", "Station"};
 
 ///// FUNCTIONS
 fn ParsedServerMessageThreadQueue* newPSMThreadQueue(Arena* a) {
@@ -359,6 +370,16 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
   switch (msg_type) {
     case MessageNewAccountCreated:
     case MessageBadPw: {/*nothing to parse but the type*/} break;
+    case MessageStarPositions: {
+      u32 star_msg_size = 2+MAX_PLANETS;
+      for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+        parsed.positions[i].x = message[1+(i*star_msg_size)];
+        parsed.positions[i].y = message[2+(i*star_msg_size)];
+        for (u32 ii = 0; ii < MAX_PLANETS; ii++) {
+          parsed.planet_types[i*MAX_PLANETS + ii] = message[(i*star_msg_size)+3+ii];
+        }
+      }
+    } break;
     case MessageCharacterId: {
       parsed.id = readU64FromBufferLE(message + 1);
     } break;
@@ -420,6 +441,15 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   while (next_net_msg != NULL) {
     msg_iters += 0;
     switch (msg.type) {
+      case MessageStarPositions: {
+        for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+          state->map[i].x = msg.positions[i].x;
+          state->map[i].y = msg.positions[i].y;
+          for (u32 ii = 0; ii < MAX_PLANETS; ii++) {
+            state->map[i].planets[ii].type = msg.planet_types[i*MAX_PLANETS + ii];
+          }
+        }
+      } break;
       case MessageNewAccountCreated: {
         state->screen = ScreenCreateCharacter;
       } break;
@@ -445,6 +475,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   }
   
   // operate on screen-based input+state
+  bool user_pressed_tab = input_buffer[0] == ASCII_TAB && input_buffer[1] == 0;
   bool user_pressed_esc = input_buffer[0] == ASCII_ESCAPE && input_buffer[1] == 0;
   bool user_pressed_a_number = input_buffer[0] >= '1' && input_buffer[0] <= '9' && input_buffer[1] == 0;
   bool user_pressed_up = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 65;
@@ -458,6 +489,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       //// SIMULATION
       if (state->me.id != 0) {
         state->screen = ScreenMainGame;
+        state->menu.selected_index = 0;
+        state->menu.len = Tab_Count;
         break;
       }
       if (state->section.selected_index == 0) {
@@ -581,21 +614,25 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       // SIMULATION
       if (input_buffer[0] == 'q' || user_pressed_esc) {
         should_quit = true;
+      } else if (user_pressed_tab) {
+        state->menu.selected_index += 1;
+        if (state->menu.selected_index > state->menu.len) {
+          state->menu.selected_index = 0;
+        }
       }
+      Tab tab = state->menu.selected_index;
 
       // RENDERING
-      renderStrToBuffer(tui->frame_buffer, 5, 1, "Games typically would render something here...", screen_dimensions);
-      bool room_active = state->section.selected_index == 0;
-      u32 tabs_y = 1 + 2 + 2;
+      u32 tabs_y = 1;
       u32 tx = 2;
-      for (u32 i = 0; i < MAIN_GAME_TAB_COUNT; i++) {
-        u32 tab_len = strlen(TABS[i]);
+      for (u32 i = 0; i < Tab_Count; i++) {
+        u32 tab_len = strlen(TAB_STRS[i]);
         Box b = { .x = tx, .y = tabs_y, .width = tab_len+1, .height = 1 };
         drawAnsiBox(tui->frame_buffer, b, screen_dimensions, state->menu.selected_index == i);
-        renderStrToBuffer(tui->frame_buffer, tx+1, tabs_y+ 1, TABS[i], screen_dimensions);
+        renderStrToBuffer(tui->frame_buffer, tx+1, tabs_y+ 1, TAB_STRS[i], screen_dimensions);
         tx += (tab_len + 3);
       }
-      // draw the system messages box
+      // draw the tabs box
       u32 box_y = tabs_y + 3;
       Box box = {
         .x = 1,
@@ -603,11 +640,78 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         .width = screen_dimensions.width - 4,
         .height = screen_dimensions.height - box_y - 2,
       };
-      drawAnsiBox(tui->frame_buffer, box, screen_dimensions, !room_active);
-      if (state->menu.selected_index == 0) { // 0 is TABS[0] is "Debug"
-        renderSystemMessages(tui->frame_buffer, tui->screen_dimensions, box);
-      } else if (state->menu.selected_index == 1) { // 1 is TABS[1] is "Speak"
-        renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "You haven't heard anything interesting lately...", screen_dimensions);
+      drawAnsiBox(tui->frame_buffer, box, screen_dimensions, true);
+      switch (tab) {
+        case TabDebug: {
+          renderSystemMessages(tui->frame_buffer, tui->screen_dimensions, box);
+        } break;
+        case TabChat: {
+          renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "You haven't heard anything interesting lately...", screen_dimensions);
+        } break;
+        case TabMap: {
+          if (user_pressed_up) {
+            state->pos.y -= 1;
+          } else if (user_pressed_down) {
+            state->pos.y += 1;
+          } else if (user_pressed_left) {
+            state->pos.x -= 1;
+          } else if (user_pressed_right) {
+            state->pos.x += 1;
+          }
+          u32 xw = 4;
+          u32 yh = 2;
+          u32 x_off = box.x+((box.width - MAP_WIDTH*xw)/2);
+          u32 y_off = box.y+((box.height - MAP_HEIGHT*yh)/2);
+          for (u32 i = 0; i < MAP_WIDTH*xw; i++) {
+            for (u32 ii = 0; ii < MAP_HEIGHT*yh; ii++) {
+              u32 sysx = i / xw;
+              u32 sysy = ii / yh;
+              u32 bufpos = XYToPos(x_off+i, y_off+ii, screen_dimensions.width);
+              tui->frame_buffer[bufpos].bytes[0] = ' ';
+              if (state->pos.x == sysx && state->pos.y == sysy) {
+                tui->frame_buffer[bufpos].background = ANSI_WHITE;
+                tui->frame_buffer[bufpos].foreground = ANSI_BLACK;
+              } else {
+                tui->frame_buffer[bufpos].foreground = ANSI_WHITE;
+                tui->frame_buffer[bufpos].background = ANSI_BLACK;
+              }
+            }
+          }
+          for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+            StarSystem sys = state->map[i];
+            u32 sysx = x_off + xw*sys.x;
+            u32 sysy = y_off + yh*sys.y;
+            // clear the render-grid for this "tile" position
+            for (u32 ii = 0; ii < xw; ii++) {
+              for (u32 iii = 0; iii < yh; iii++) {
+                u32 bufpos = XYToPos(sysx+ii, sysy+iii, screen_dimensions.width);
+                tui->frame_buffer[bufpos].bytes[0] = 0;
+              }
+            }
+            renderUtf8CodePoint(tui, sysx, sysy, "⭐");
+            renderUtf8CodePoint(
+              tui,
+              sysx +2,
+              sysy,
+              strForPlanet(sys.planets[0].type)
+            );
+            renderUtf8CodePoint(
+              tui,
+              sysx,
+              sysy +1,
+              strForPlanet(sys.planets[1].type)
+            );
+            renderUtf8CodePoint(
+              tui,
+              sysx +2,
+              sysy +1,
+              strForPlanet(sys.planets[2].type)
+            );
+          }
+        } break;
+        case TabShip: {} break;
+        case TabStation: {} break;
+        case Tab_Count: {} break;
       }
     } break;
     case ScreenLogin: {

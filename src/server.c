@@ -626,6 +626,21 @@ fn void* gameLoop(void* params) {
               writeU64ToBufferLE(outgoing_message.bytes + 1, account.id);
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               printf("MessageCharacterId sent\n");
+
+              // TODO tell the client about the map
+              u32 star_msg_size = 2+MAX_PLANETS;
+              outgoing_message.address = sender;
+              outgoing_message.bytes_len = 1+(star_msg_size*STAR_SYSTEM_COUNT);
+              outgoing_message.bytes[0] = (u8)MessageStarPositions;
+              for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+                outgoing_message.bytes[1+(i*star_msg_size)] = (u8)state.map[i].x;
+                outgoing_message.bytes[2+(i*star_msg_size)] = (u8)state.map[i].y;
+                for (u32 ii = 0; ii < MAX_PLANETS; ii++) {
+                  outgoing_message.bytes[3+ii+(i*star_msg_size)] = state.map[i].planets[ii].type;
+                }
+              }
+              outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+              printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
             } else {
               printf("client tried to create a character when he already has one.");
             }
@@ -715,7 +730,7 @@ i32 main(i32 argc, ptr argv[]) {
   for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
     u32 planet_count = rand() % MAX_PLANETS + 1;
     for (u32 ii = 0; ii < planet_count; ii++) {
-      state.map[i].planets[ii].type = (PlanetType)(rand() % PlanetType_Count);
+      state.map[i].planets[ii].type = 1+(PlanetType)(rand() % (PlanetType_Count -1));
       switch (state.map[i].planets[ii].type) {
         case PlanetTypeEarth: {
           // TODO: roll the initial commodity counts
@@ -734,7 +749,9 @@ i32 main(i32 argc, ptr argv[]) {
         case PlanetTypeStation: {
           // a lot of ??? drugs?
         } break;
-        case PlanetType_Count: {} break;
+        case PlanetTypeNull:
+        case PlanetType_Count:
+          break;
       }
     }
   }

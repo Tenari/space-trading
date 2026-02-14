@@ -331,6 +331,11 @@ typedef struct Dim2 {
   u16 width;
 } Dim2;
 
+typedef struct Pos2u8 {
+  u8 x;
+  u8 y;
+} Pos2u8;
+
 typedef struct Pos2 {
   u16 x;
   u16 y;

@@ -169,6 +169,38 @@ fn void drawAnsiBox(Pixel* buf, Box box, Dim2 sd, bool bold) {
   copyStr(buf[pos+1+box.width].bytes, use[5]);
 }
 
+fn void renderUtf8CodePoint(TuiState* tui, u16 x, u16 y, str text) {
+  u32 bufpos = XYToPos(x,y,tui->screen_dimensions.width);
+  Pixel* buf = tui->frame_buffer;
+  Utf8Character first_character_class = classifyUtf8Character(text[0]);
+  // if it's a single ASCII character
+  if (first_character_class == Utf8CharacterAscii && text[1] == '\0') {
+    buf[bufpos].bytes[0] = text[0];
+  // if it's a pair of ASCII characters
+  } else if (first_character_class == Utf8CharacterAscii && text[1] > 0 && text[2] == '\0') {
+    buf[bufpos].bytes[0] = text[0];
+    buf[bufpos+1].bytes[0] = text[1];
+  } else if (first_character_class == Utf8CharacterThreeByte) {
+    for (u32 k = 0; k < strlen(text)/3; k++) {
+      for (u32 l = 0; l < 3; l++) {
+        buf[bufpos+k].bytes[l] = text[l+(k*3)];
+      }
+    }
+  } else if (first_character_class == Utf8CharacterFourByte) {
+    for (u32 k = 0; k < strlen(text)/UTF8_MAX_WIDTH; k++) {
+      for (u32 l = 0; l < UTF8_MAX_WIDTH; l++) {
+        buf[bufpos+k].bytes[l] = text[l+(k*UTF8_MAX_WIDTH)];
+      }
+    }
+    // handle secondary bytes that didn't divide evenly
+    for (u32 k = 0; k < strlen(text)%UTF8_MAX_WIDTH; k++) {
+      buf[bufpos+1].bytes[k] = text[UTF8_MAX_WIDTH+k];
+    }
+  } else {
+    assert(false && "unhandled bullshit");
+  }
+}
+
 fn void renderUtf8CharToBuffer(Pixel* buf, u16 x, u16 y, str text, Dim2 screen_dimensions) {
   assert(strlen(text) <= UTF8_MAX_WIDTH);
   u32 pos = x + (screen_dimensions.width*y);

@@ -6,10 +6,11 @@
 
 ///// #define some game-tunable constants
 #define STARTING_DOWN_PAYMENT (10000)
+#define SHIP_DETAIL_COUNT (8)
 #define STAR_SYSTEM_COUNT (40)
 #define MAP_WIDTH (40)
 #define MAP_HEIGHT (10)
-#define MAX_PLANETS (16)
+#define MAX_PLANETS (3)
 
 typedef enum EntityFeature {
   FeatureWalksAround,
@@ -43,7 +44,6 @@ global str SHIP_TYPE_STRINGS[] = {
   "NX-400",
 };
 
-#define SHIP_DETAIL_COUNT (8)
 typedef struct ShipTemplate {
   ShipType type;
   u8 drive_efficiency;
@@ -266,6 +266,7 @@ typedef struct Commodity {
 } Commodity;
 
 typedef enum PlanetType {
+  PlanetTypeNull,
   PlanetTypeEarth,
   PlanetTypeGas,
   PlanetTypeMoon,
@@ -369,6 +370,7 @@ typedef enum Message {
   MessageCharacterId,
   MessageBadPw,
   MessageNewAccountCreated,
+  MessageStarPositions,
   Message_Count,
 } Message;
 static const char* MESSAGE_STRINGS[] = {
@@ -376,6 +378,7 @@ static const char* MESSAGE_STRINGS[] = {
   "CharacterId",
   "BadPw",
   "NewAccountCreated",
+  "StarPositions",
 };
 
 #endif //GAMESHARED_H
