@@ -85,6 +85,7 @@ typedef struct ParsedServerMessage {
   XYZ xyz;
   Pos2u8 positions[STAR_SYSTEM_COUNT];
   PlanetType planet_types[MAX_PLANETS*STAR_SYSTEM_COUNT];
+  StarSystem sys;
   //Entity entities[PARSED_CLIENT_ENTITY_LEN];
   //u64 ids[PARSED_IDS_LEN];
 } ParsedServerMessage;
@@ -130,6 +131,7 @@ typedef struct GameState {
   StringChunkList message_input;
   StarSystem map[STAR_SYSTEM_COUNT];
   Pos2 pos;
+  StarSystem current;
 } GameState;
 
 ///// GLOBALS
@@ -380,6 +382,15 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
         }
       }
     } break;
+    case MessageSystemCommodities: {
+      parsed.id = (u64)message[msg_pos++];
+      u32 planet_count = message[msg_pos++];
+      for (u32 i = 0; i < planet_count; i++) {
+        for (u32 ii = 0; ii < Commodity_Count; ii++) {
+          parsed.sys.planets[i].commodities[ii] = message[msg_pos++];
+        }
+      }
+    } break;
     case MessageCharacterId: {
       parsed.id = readU64FromBufferLE(message + 1);
     } break;
@@ -447,6 +458,15 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           state->map[i].y = msg.positions[i].y;
           for (u32 ii = 0; ii < MAX_PLANETS; ii++) {
             state->map[i].planets[ii].type = msg.planet_types[i*MAX_PLANETS + ii];
+          }
+        }
+      } break;
+      case MessageSystemCommodities: {
+        u32 sys_idx = msg.id;
+        state->current.name = STAR_NAMES[sys_idx];
+        for (u32 i = 0; i < MAX_PLANETS; i++) {
+          for (u32 ii = 0; ii < Commodity_Count; ii++) {
+            state->current.planets[i].commodities[ii] = msg.sys.planets[i].commodities[ii];
           }
         }
       } break;
@@ -710,7 +730,40 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
         } break;
         case TabShip: {} break;
-        case TabStation: {} break;
+        case TabStation: {
+          renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "Welcome to ", screen_dimensions);
+          renderStrToBuffer(tui->frame_buffer, box.x+2+11, box.y+1, state->current.name, screen_dimensions);
+
+          char tmp_buffer[64] = {0};
+          u32 table_x = box.x+2;
+          u32 line = box.y+3;
+          str cols[4] = {"Commodity", "#", "Bid", "Ask"};
+          u32 lens[4] = { 24, 6, 6, 6};
+          u32 col_x_pos = 0;
+          // render headers
+          for (u32 i = 0; i < 4; col_x_pos += lens[i++]) {
+            renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, cols[i], screen_dimensions);
+            for (u32 ii = 0; ii < lens[i]; ii++) {
+              renderUtf8CharToBuffer(tui->frame_buffer, table_x+col_x_pos+ii, line+1, "━", screen_dimensions);
+            }
+          }
+          line += 2;
+          // render rows
+          for (u32 i = 0; i < Commodity_Count; i++) {
+            col_x_pos = 0;
+            for (u32 ii = 0; ii < 4; col_x_pos += lens[ii++]) {
+              MemoryZero(tmp_buffer, 64);
+              if (ii == 0) {
+                sprintf(tmp_buffer, "%s", COMMODITY_STRINGS[i]);
+              } else if (ii == 1) {
+                sprintf(tmp_buffer, "%d", state->current.planets[0].commodities[i]);
+              } else {
+                tmp_buffer[0] = '-';
+              }
+              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line+i, tmp_buffer, screen_dimensions);
+            }
+          }
+        } break;
         case Tab_Count: {} break;
       }
     } break;

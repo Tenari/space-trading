@@ -70,6 +70,7 @@ typedef struct Entity {
 
 typedef struct Account {
   u32 id; // the index in the array
+  Pos2 pos;
   String name;
   String pw;
   PlayerShip ship;
@@ -618,6 +619,10 @@ fn void* gameLoop(void* params) {
               };
               account.ship = player_ship;
               printf("ship_type=%s, client_handle=%d, acct_id=%d\n", SHIP_TYPE_STRINGS[msg.byte], client_handle, account.id);
+              u32 starting_system_idx = rand() % STAR_SYSTEM_COUNT;
+              StarSystem starting_system = state.map[starting_system_idx];
+              account.pos.x = starting_system.x;
+              account.pos.y = starting_system.y;
 
               // tell the client their account id
               outgoing_message.address = sender;
@@ -641,6 +646,26 @@ fn void* gameLoop(void* params) {
               }
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+
+              u32 planet_count = 0;
+              for (u32 i = 0; i < MAX_PLANETS; i++) {
+                if (starting_system.planets[i].type != PlanetTypeNull) {
+                  planet_count++;
+                }
+              }
+              outgoing_message.bytes_len = 1 + 1 + 1 + (planet_count * Commodity_Count);
+              u32 msg_i = 0;
+              outgoing_message.bytes[msg_i++] = (u8)MessageSystemCommodities;
+              outgoing_message.bytes[msg_i++] = (u8)starting_system_idx;
+              outgoing_message.bytes[msg_i++] = (u8)planet_count;
+              for (u32 i = 0; i < planet_count; i++) {
+                for (u32 ii = 0; ii < Commodity_Count; ii++) {
+                  outgoing_message.bytes[msg_i++] = starting_system.planets[i].commodities[ii];
+                }
+              }
+              outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+              printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+
             } else {
               printf("client tried to create a character when he already has one.");
             }
@@ -731,6 +756,10 @@ i32 main(i32 argc, ptr argv[]) {
     u32 planet_count = rand() % MAX_PLANETS + 1;
     for (u32 ii = 0; ii < planet_count; ii++) {
       state.map[i].planets[ii].type = 1+(PlanetType)(rand() % (PlanetType_Count -1));
+      for (u32 iii = 0; iii < Commodity_Count; iii++) {
+        state.map[i].planets[ii].commodities[iii] = rand() % 1000;
+        state.map[i].planets[ii].production[iii] = rand() % 10;
+      }
       switch (state.map[i].planets[ii].type) {
         case PlanetTypeEarth: {
           // TODO: roll the initial commodity counts
