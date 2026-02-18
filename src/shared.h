@@ -123,23 +123,6 @@ global FieldDescriptor SHIP_FIELDS[SHIP_DETAIL_COUNT] = {
   { "SmugglersHold", FieldTypeU16, offsetof(ShipTemplate, smugglers_hold_cu_m), 13 },
 };
 
-typedef struct PlayerShip {
-  ShipType type;
-  u8 drive_efficiency;
-  u8 life_support_efficiency;
-  u16 vacuum_cargo_slots;
-  u16 climate_cargo_slots;
-  u16 passenger_berths;
-  u16 passenger_amenities_flags;
-  u16 smugglers_hold_cu_m;
-  u32 base_cost;
-  u32 remaining_mortgage;
-  f32 interest_rate;
-  u32 cu_m_fuel; // we are just saying you can buy as much fuel as you want
-  u32 cu_m_o2; // we are just saying you can buy as much o2 as you want
-  u64 id;
-} PlayerShip;
-
 typedef enum EquipmentType {
   EquipmentTypeAquaponicsSystem,
   EquipmentType3DPrinter,
@@ -165,42 +148,157 @@ typedef enum CommodityType {
   CommoditySemiConductors,
   CommodityCommonMetals,
   CommodityRareMetals,
+  CommodityPreciousMetals,
   CommodityAlcohol,
   CommodityClothes,
   CommodityPersonalSundries,
   Commodity_Count,
 } CommodityType;
 
-static const char* COMMODITY_STRINGS[] = {
-  "Hydrogen Fuel",
-  "Oxygen",
-  "Water",
-  "Fertilizer",
-  "Raw Textiles",
-  "Low grade Ore",
-  "High grade Ore",
-  "Plastics",
-  "Grain",
-  "Meat",
-  "Spices",
-  "Electronics",
-  "Glass",
-  "Hand Tools",
-  "Semi-conductors (Silicon, Arsenic, Boron)",
-  "Common Metals (Iron, Nickel, Zinc)",
-  "Rare Metals (Titanium, Chromium)",
-  "Alcohol",
-  "Clothes",
-  "Personal Sundries (Cutlery, Storage, Buckles, Toys, Furnishings)",
-};
+typedef enum StorageUnit {
+  StorageUnitKg,
+  StorageUnitContainer,
+  StorageUnitAtmoContainer,
+  StorageUnit_Count,
+} StorageUnit;
 
 typedef struct Commodity {
   CommodityType type;
+  StorageUnit unit;
   str name;
-  u32 base_price_per_kg;
-  u32 kg_per_container;
-  u32 m3_per_kg;
+  u32 price;
+  u32 qty;
+  u32 consumption;
 } Commodity;
+
+global Commodity COMMODITIES[Commodity_Count] = {
+  { .type = CommodityHydrogenFuel,  .unit = StorageUnitKg,
+    .name = "Hydrogen Fuel",
+    .price = 10, .qty = 1000, .consumption = 200,
+  },
+  { .type = CommodityOxygen,  .unit = StorageUnitKg,
+    .name = "Oxygen",
+    .price = 5, .qty = 10000, .consumption = 500,
+  },
+  { .type = CommodityWater,  .unit = StorageUnitContainer,
+    .name = "Water",
+    .price = 700, .qty = 100, .consumption = 10,
+  },
+  { .type = CommodityFertilizer,  .unit = StorageUnitContainer,
+    .name = "Fertilizer",
+    .price = 1200, .qty = 70, .consumption = 10,
+  },
+  { .type = CommodityRawTextiles,  .unit = StorageUnitContainer,
+    .name = "Raw Textiles",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityLowGradeOre,  .unit = StorageUnitContainer,
+    .name = "Low Grade Ore",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityHighGradeOre,  .unit = StorageUnitContainer,
+    .name = "High Grade Ore",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityPlastics,  .unit = StorageUnitContainer,
+    .name = "Plastics",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityGrain,  .unit = StorageUnitContainer,
+    .name = "Grain",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityMeat,  .unit = StorageUnitContainer,
+    .name = "Meat",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommoditySpices,  .unit = StorageUnitContainer,
+    .name = "Spices",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityElectronics,  .unit = StorageUnitContainer,
+    .name = "Electronics",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityGlass,  .unit = StorageUnitContainer,
+    .name = "Glass",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityHandTools,  .unit = StorageUnitContainer,
+    .name = "Hand Tools",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommoditySemiConductors,  .unit = StorageUnitContainer,
+    .name = "Semi-conductors (Silicon, Arsenic, Boron)",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityCommonMetals,  .unit = StorageUnitContainer,
+    .name = "Common Metals (Iron, Nickel, Zinc)",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityRareMetals,  .unit = StorageUnitContainer,
+    .name = "Rare Metals (Titanium, Chromium)",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityPreciousMetals,  .unit = StorageUnitKg,
+    .name = "Precious Metals (Silver, Gold, Platinum)",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityAlcohol,  .unit = StorageUnitContainer,
+    .name = "Alcohol",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityClothes,  .unit = StorageUnitContainer,
+    .name = "Clothes",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+  { .type = CommodityPersonalSundries,  .unit = StorageUnitContainer,
+    .name = "Personal Sundries (Cutlery, Toys, Misc)",
+    .price = 1800, .qty = 40, .consumption = 3,
+  },
+};
+fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
+  f32 result = 0.0;
+  Commodity details = COMMODITIES[type];
+  f32 max = details.price * 5;
+  f32 min = (f32)details.price / 5.0;
+  if (quantity == 0) {
+    return max;
+  }
+  result = ((f32)details.price) * ((f32)details.qty / (f32)quantity); // the bid/ask spread
+  if (max < result) {
+    result = max;
+  }
+  if (min > result) {
+    result = min;
+  }
+  // the bid/ask spread
+  if (bid) {
+    result = result * 0.98;
+  } else {
+    result = result * 1.02;
+  }
+  return result;
+}
+
+typedef struct PlayerShip {
+  ShipType type;
+  u8 drive_efficiency;
+  u8 life_support_efficiency;
+  u16 vacuum_cargo_slots;
+  u16 climate_cargo_slots;
+  u16 passenger_berths;
+  u16 passenger_amenities_flags;
+  u16 smugglers_hold_cu_m;
+  u32 base_cost;
+  u32 remaining_mortgage;
+  f32 interest_rate;
+  u32 cu_m_fuel; // we are just saying you can buy as much fuel as you want
+  u32 cu_m_o2; // we are just saying you can buy as much o2 as you want
+  f32 credits;
+  u64 id;
+  u32 commodities[Commodity_Count];
+} PlayerShip;
 
 typedef enum PlanetType {
   PlanetTypeNull,

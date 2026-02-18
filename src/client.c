@@ -118,14 +118,14 @@ typedef struct GameState {
   Screen screen;
   Screen old_screen;
   EntityList entities;
-  Entity me;
+  PlayerShip me;
   u64 server_frame;
   u64 loop_count;
   Arena entity_arena;
   StringArena string_arena;
   LoginState login_state;
   MenuState menu;
-  MenuState section; // for tabbing through selected "portions" of the screen
+  MenuState row; // for tracking which row of a table the user has selected
   UDPMessage keep_alive_msg;
   UDPClient client;
   StringChunkList message_input;
@@ -483,7 +483,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         addSystemMessage((u8*)bytes);
         state->screen = ScreenMainGame;
         state->menu.selected_index = 0;
-        state->section.selected_index = 0;
+        state->row.selected_index = 0;
       } break;
       case Message_Count:
       case MessageInvalid:
@@ -513,9 +513,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         state->menu.len = Tab_Count;
         break;
       }
-      if (state->section.selected_index == 0) {
-        state->menu.len = ShipType_Count;
-      }
+      state->menu.len = ShipType_Count;
 
       if (input_buffer[0] == 'q' || user_pressed_esc) {
         should_quit = true;
@@ -526,6 +524,19 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       } else if (user_pressed_a_number) {
         state->menu.selected_index = input_buffer[0] - '1';
       } else if (input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED) {
+        // save ship choice to our gamestate
+        ShipTemplate template = SHIPS[state->menu.selected_index];
+        state->me.type = template.type;
+        state->me.drive_efficiency = template.drive_efficiency;
+        state->me.life_support_efficiency = template.life_support_efficiency;
+        state->me.vacuum_cargo_slots = template.vacuum_cargo_slots;
+        state->me.climate_cargo_slots = template.climate_cargo_slots;
+        state->me.passenger_berths = template.passenger_berths;
+        state->me.passenger_amenities_flags = template.passenger_amenities_flags;
+        state->me.smugglers_hold_cu_m = template.smugglers_hold_cu_m;
+        state->me.base_cost = template.base_cost;
+        state->me.remaining_mortgage = template.base_cost - STARTING_DOWN_PAYMENT;
+        state->me.interest_rate = calcInterestRate(template.base_cost, STARTING_DOWN_PAYMENT);
         // send character ship details to server
         UDPMessage msg = {0};
         msg.address = udp->server_address;
@@ -631,18 +642,19 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       }
     } break;
     case ScreenMainGame: {
-      // SIMULATION
-      if (input_buffer[0] == 'q' || user_pressed_esc) {
-        should_quit = true;
-      } else if (user_pressed_tab) {
+      if (user_pressed_tab) {
         state->menu.selected_index += 1;
         if (state->menu.selected_index > state->menu.len) {
           state->menu.selected_index = 0;
         }
+        if (state->menu.selected_index == TabStation) {
+          state->row.len = Commodity_Count;
+          state->row.selected_index = 0;
+        }
       }
       Tab tab = state->menu.selected_index;
 
-      // RENDERING
+      // per-tab simulation+rendering
       u32 tabs_y = 1;
       u32 tx = 2;
       for (u32 i = 0; i < Tab_Count; i++) {
@@ -663,12 +675,18 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       drawAnsiBox(tui->frame_buffer, box, screen_dimensions, true);
       switch (tab) {
         case TabDebug: {
+          if (input_buffer[0] == 'q' || user_pressed_esc) {
+            should_quit = true;
+          }
           renderSystemMessages(tui->frame_buffer, tui->screen_dimensions, box);
         } break;
         case TabChat: {
           renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "You haven't heard anything interesting lately...", screen_dimensions);
         } break;
         case TabMap: {
+          if (input_buffer[0] == 'q' || user_pressed_esc) {
+            should_quit = true;
+          }
           if (user_pressed_up) {
             state->pos.y -= 1;
           } else if (user_pressed_down) {
@@ -729,19 +747,41 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             );
           }
         } break;
-        case TabShip: {} break;
+        case TabShip: {
+          if (input_buffer[0] == 'q' || user_pressed_esc) {
+            should_quit = true;
+          }
+        } break;
         case TabStation: {
+          if (input_buffer[0] == 'q' || user_pressed_esc) {
+            should_quit = true;
+          }
+          if (user_pressed_up) {
+            if (state->row.selected_index == 0) {
+              state->row.selected_index = state->row.len - 1;
+            } else {
+              state->row.selected_index -= 1;
+            }
+          } else if (user_pressed_down) {
+            if (state->row.selected_index == state->row.len - 1) {
+              state->row.selected_index = 0;
+            } else {
+              state->row.selected_index += 1;
+            }
+          } else if (user_pressed_enter) {
+            // TODO they are trying to trade a commodity
+          }
           renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "Welcome to ", screen_dimensions);
           renderStrToBuffer(tui->frame_buffer, box.x+2+11, box.y+1, state->current.name, screen_dimensions);
 
           char tmp_buffer[64] = {0};
           u32 table_x = box.x+2;
           u32 line = box.y+3;
-          str cols[4] = {"Commodity", "#", "Bid", "Ask"};
-          u32 lens[4] = { 24, 6, 6, 6};
+          str cols[6] = {"Commodity", "Unit", "#", "Bid", "Ask", "Owned"};
+          u32 lens[6] = { 44, 6, 6, 6, 6, 6};
           u32 col_x_pos = 0;
           // render headers
-          for (u32 i = 0; i < 4; col_x_pos += lens[i++]) {
+          for (u32 i = 0; i < 6; col_x_pos += lens[i++]) {
             renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, cols[i], screen_dimensions);
             for (u32 ii = 0; ii < lens[i]; ii++) {
               renderUtf8CharToBuffer(tui->frame_buffer, table_x+col_x_pos+ii, line+1, "━", screen_dimensions);
@@ -751,14 +791,29 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           // render rows
           for (u32 i = 0; i < Commodity_Count; i++) {
             col_x_pos = 0;
-            for (u32 ii = 0; ii < 4; col_x_pos += lens[ii++]) {
+            u32 qty = state->current.planets[0].commodities[i] + state->current.planets[1].commodities[i] + state->current.planets[2].commodities[i];
+            for (u32 ii = 0; ii < 6; col_x_pos += lens[ii++]) {
+              if (i == state->row.selected_index) {
+                for (u32 iii = 0; iii < lens[ii]; iii++) {
+                  u32 pos = XYToPos(table_x+col_x_pos+iii, line+i, screen_dimensions.width);
+                  tui->frame_buffer[pos].background = ANSI_WHITE;
+                  tui->frame_buffer[pos].foreground = ANSI_BLACK;
+                  tui->frame_buffer[pos].bytes[0] = ' ';
+                }
+              }
               MemoryZero(tmp_buffer, 64);
               if (ii == 0) {
-                sprintf(tmp_buffer, "%s", COMMODITY_STRINGS[i]);
+                sprintf(tmp_buffer, "%s", COMMODITIES[i].name);
               } else if (ii == 1) {
-                sprintf(tmp_buffer, "%d", state->current.planets[0].commodities[i]);
-              } else {
-                tmp_buffer[0] = '-';
+                sprintf(tmp_buffer, "%s", COMMODITIES[i].unit == StorageUnitKg ? "kg" : "cont");
+              } else if (ii == 2) {
+                sprintf(tmp_buffer, "%d", qty);
+              } else if (ii == 3) {
+                sprintf(tmp_buffer, "%d", (u32)priceForCommodity(i, qty, true));
+              } else if (ii == 4) {
+                sprintf(tmp_buffer, "%d", (u32)priceForCommodity(i, qty, false));
+              } else if (ii == 5) {
+                sprintf(tmp_buffer, "%d", state->me.commodities[i]);
               }
               renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line+i, tmp_buffer, screen_dimensions);
             }
@@ -884,7 +939,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       if (user_pressed_esc || input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED) {
         state->me.id = 0;
         state->menu.selected_index = 0;
-        state->section.selected_index = 0;
         clearServerSentState();
         state->screen = ScreenCreateCharacter;
       }
