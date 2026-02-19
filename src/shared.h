@@ -88,30 +88,6 @@ fn f32 calcInterestRate(u32 cost, u32 down_payment) {
   return mortgage_rate;
 }
 
-typedef enum {
-  FieldTypeU8,
-  FieldTypeU16,
-  FieldTypeU32,
-  FieldTypeFloat,
-  FieldTypeString,
-  FieldTypeEnum,
-  FieldType_Count,
-} FieldType;
-
-typedef struct FieldDescriptor {
-  str name;
-  FieldType type;
-  size_t offset;
-  int width;  // column width for display
-  str* enum_vals;
-} FieldDescriptor;
-
-// Define field metadata using offsetof
-#ifndef offsetof
-#define offsetof(st, m) ((size_t)&(((st*)0)->m))
-#endif
-
-// Field descriptors for Employee
 global FieldDescriptor SHIP_FIELDS[SHIP_DETAIL_COUNT] = {
   { "Type", FieldTypeEnum, offsetof(ShipTemplate, type), 16, (str*)&SHIP_TYPE_STRINGS },
   { "Cost", FieldTypeU32, offsetof(ShipTemplate, base_cost), 8 },
@@ -155,12 +131,42 @@ typedef enum CommodityType {
   Commodity_Count,
 } CommodityType;
 
+global str COMMODITY_STRINGS[Commodity_Count] = {
+  "Hydrogen Fuel",
+  "Oxygen",
+  "Water",
+  "Fertilizer",
+  "Raw Textiles",
+  "Low Grade Ore",
+  "High Grade Ore",
+  "Plastics",
+  "Grain",
+  "Meat",
+  "Spices",
+  "Electronics",
+  "Glass",
+  "Hand Tools",
+  "Semi-conductors (Silicon, Arsenic, Boron)",
+  "Common Metals (Iron, Nickel, Zinc)",
+  "Rare Metals (Titanium, Chromium)",
+  "Precious Metals (Silver, Gold, Platinum)",
+  "Alcohol",
+  "Clothes",
+  "Personal Sundries (Cutlery, Toys, Misc)",
+};
+
 typedef enum StorageUnit {
   StorageUnitKg,
   StorageUnitContainer,
   StorageUnitAtmoContainer,
   StorageUnit_Count,
 } StorageUnit;
+
+global str STORAGE_UNIT_STRINGS[StorageUnit_Count] = {
+  "kg",
+  "cont",
+  "atmo"
+};
 
 typedef struct Commodity {
   CommodityType type;
@@ -257,6 +263,24 @@ global Commodity COMMODITIES[Commodity_Count] = {
     .price = 1800, .qty = 40, .consumption = 3,
   },
 };
+typedef struct MarketCommodity {
+  CommodityType type;
+  StorageUnit unit;
+  u32 bid;
+  u32 ask;
+  u32 qty;
+  u32 owned;
+} MarketCommodity;
+
+global FieldDescriptor MARKET_COMMODITY_FIELDS[Commodity_Count] = {
+  { "Commodity", FieldTypeEnum, offsetof(MarketCommodity, type), 44, (str*)&COMMODITY_STRINGS },
+  { "Unit", FieldTypeEnum, offsetof(MarketCommodity, unit), 6, (str*)&STORAGE_UNIT_STRINGS },
+  { "#", FieldTypeU32, offsetof(MarketCommodity, qty), 6 },
+  { "Bid", FieldTypeU32, offsetof(MarketCommodity, bid), 6 },
+  { "Ask", FieldTypeU32, offsetof(MarketCommodity, ask), 6 },
+  { "Owned", FieldTypeU32, offsetof(MarketCommodity, owned), 6 },
+};
+
 fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
   f32 result = 0.0;
   Commodity details = COMMODITIES[type];

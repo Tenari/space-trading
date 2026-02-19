@@ -525,6 +525,64 @@ fn Pos2 renderCommandPalette(TuiState* tui, String current_search, CommandPalett
   return result;
 }
 
+fn void renderTable(TuiState* tui, TableDrawInfo t, u32 selected_index, FieldDescriptor fields[], u32 table_col_pad, void* data, u32 sizeof_data_item) {
+  char tmp_buffer[64] = {0};
+  u32 col_x_pos = 0;
+  // render headers
+  for (u32 i = 0; i < t.cols; col_x_pos += fields[i++].width+table_col_pad) {
+    renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, fields[i].name, tui->screen_dimensions);
+    for (u32 ii = 0; ii < fields[i].width; ii++) {
+      renderUtf8CharToBuffer(tui->frame_buffer, t.x_offset+col_x_pos+ii, t.y_offset+1, "━", tui->screen_dimensions);
+    }
+  }
+  t.y_offset += 2;
+  // render the rows
+  for (u32 i = 0; i < t.rows; t.y_offset++, i++) {
+    col_x_pos = 0;
+    ptr item_offset = data + (sizeof_data_item * i);
+    // render the columns
+    for (u32 ii = 0; ii < t.cols; col_x_pos += fields[ii].width+table_col_pad, ii++) {
+      if (i == selected_index) {
+        for (u32 iii = 0; iii < fields[ii].width+table_col_pad; iii++) {
+          u32 pos = XYToPos(t.x_offset+col_x_pos+iii, t.y_offset, tui->screen_dimensions.width);
+          tui->frame_buffer[pos].background = ANSI_WHITE;
+          tui->frame_buffer[pos].foreground = ANSI_BLACK;
+          tui->frame_buffer[pos].bytes[0] = ' ';
+        }
+      }
+      FieldDescriptor details = fields[ii];
+      void *field_ptr = item_offset + details.offset;
+      MemoryZero(tmp_buffer, 64);
+      switch (details.type) {
+        case FieldTypeEnum: {
+          renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, details.enum_vals[*(u8 *)field_ptr], tui->screen_dimensions);
+        } break;
+        case FieldTypeU8: {
+          sprintf(tmp_buffer, "%d", *(u8 *)field_ptr);
+          renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, tmp_buffer, tui->screen_dimensions);
+        } break;
+        case FieldTypeU16: {
+          sprintf(tmp_buffer, "%d", *(u16 *)field_ptr);
+          renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, tmp_buffer, tui->screen_dimensions);
+        } break;
+        case FieldTypeU32: {
+          sprintf(tmp_buffer, "%d", *(u32 *)field_ptr);
+          renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, tmp_buffer, tui->screen_dimensions);
+        } break;
+        case FieldTypeFloat: {
+          sprintf(tmp_buffer, "%f", *(f32 *)field_ptr);
+          renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, tmp_buffer, tui->screen_dimensions);
+        } break;
+        case FieldTypeString: {
+          renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, (ptr)field_ptr, tui->screen_dimensions);
+        } break;
+        case FieldType_Count:
+          break;
+      }
+    }
+  }
+}
+
 fn void renderChoiceMenu(TuiState* tui, u16 x, u16 y, ptr options[], u32 len, bool choosable, u32 selected_index, u8* colors) {
   for (u32 i = 0; i < len; i++) {
     u32 pos = x + (tui->screen_dimensions.width*(y+i));

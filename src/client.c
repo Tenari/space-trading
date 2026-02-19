@@ -583,63 +583,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       renderStrToBuffer(tui->frame_buffer, 5, ++line, tmp_buffer, screen_dimensions);
       line++;
       // the table
-      u32 table_x = 5;
-      u32 table_col_pad = 1;
-      // render the headers
-      u32 col_x_pos = 0;
-      for (u32 i = 0; i < SHIP_DETAIL_COUNT; col_x_pos += SHIP_FIELDS[i].width+table_col_pad, i++) {
-        renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, SHIP_FIELDS[i].name, screen_dimensions);
-        for (u32 ii = 0; ii < SHIP_FIELDS[i].width; ii++) {
-          renderUtf8CharToBuffer(tui->frame_buffer, table_x+col_x_pos+ii, line+1, "━", screen_dimensions);
-        }
-      }
-      line++;
-      line++;
-      // render the rows
-      for (u32 i = 0; i < ShipType_Count; line++, i++) {
-        col_x_pos = 0;
-        ShipTemplate ship = SHIPS[i];
-        // render the columns
-        for (u32 ii = 0; ii < SHIP_DETAIL_COUNT; col_x_pos += SHIP_FIELDS[ii].width+table_col_pad, ii++) {
-          if (i == state->menu.selected_index) {
-            for (u32 iii = 0; iii < SHIP_FIELDS[ii].width+table_col_pad; iii++) {
-              u32 pos = XYToPos(table_x+col_x_pos+iii, line, screen_dimensions.width);
-              tui->frame_buffer[pos].background = ANSI_WHITE;
-              tui->frame_buffer[pos].foreground = ANSI_BLACK;
-              tui->frame_buffer[pos].bytes[0] = ' ';
-            }
-          }
-          FieldDescriptor details = SHIP_FIELDS[ii];
-          void *field_ptr = (char *)&ship + details.offset;
-          MemoryZero(tmp_buffer, 64);
-          switch (details.type) {
-            case FieldTypeEnum: {
-              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, details.enum_vals[ship.type], screen_dimensions);
-            } break;
-            case FieldTypeU8: {
-              sprintf(tmp_buffer, "%d", *(u8 *)field_ptr);
-              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
-            } break;
-            case FieldTypeU16: {
-              sprintf(tmp_buffer, "%d", *(u16 *)field_ptr);
-              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
-            } break;
-            case FieldTypeU32: {
-              sprintf(tmp_buffer, "%d", *(u32 *)field_ptr);
-              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
-            } break;
-            case FieldTypeFloat: {
-              sprintf(tmp_buffer, "%f", *(f32 *)field_ptr);
-              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, tmp_buffer, screen_dimensions);
-            } break;
-            case FieldTypeString: {
-              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, (ptr)field_ptr, screen_dimensions);
-            } break;
-            case FieldType_Count:
-              break;
-          }
-        }
-      }
+      TableDrawInfo info = {
+        .x_offset = 5, .y_offset = line,
+        .rows = ShipType_Count, .cols = SHIP_DETAIL_COUNT,
+      };
+      renderTable(tui, info, state->menu.selected_index, SHIP_FIELDS, 1, SHIPS, sizeof(SHIPS[0]));
     } break;
     case ScreenMainGame: {
       if (user_pressed_tab) {
@@ -774,50 +722,23 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "Welcome to ", screen_dimensions);
           renderStrToBuffer(tui->frame_buffer, box.x+2+11, box.y+1, state->current.name, screen_dimensions);
 
-          char tmp_buffer[64] = {0};
-          u32 table_x = box.x+2;
-          u32 line = box.y+3;
-          str cols[6] = {"Commodity", "Unit", "#", "Bid", "Ask", "Owned"};
-          u32 lens[6] = { 44, 6, 6, 6, 6, 6};
-          u32 col_x_pos = 0;
-          // render headers
-          for (u32 i = 0; i < 6; col_x_pos += lens[i++]) {
-            renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line, cols[i], screen_dimensions);
-            for (u32 ii = 0; ii < lens[i]; ii++) {
-              renderUtf8CharToBuffer(tui->frame_buffer, table_x+col_x_pos+ii, line+1, "━", screen_dimensions);
-            }
-          }
-          line += 2;
-          // render rows
+          // the table
+          TableDrawInfo info = {
+            .x_offset = box.x+2, .y_offset = box.y+3,
+            .rows = Commodity_Count, .cols = 6,
+          };
+          MarketCommodity rows[Commodity_Count] = { 0 };
           for (u32 i = 0; i < Commodity_Count; i++) {
-            col_x_pos = 0;
+            Commodity c = COMMODITIES[i];
             u32 qty = state->current.planets[0].commodities[i] + state->current.planets[1].commodities[i] + state->current.planets[2].commodities[i];
-            for (u32 ii = 0; ii < 6; col_x_pos += lens[ii++]) {
-              if (i == state->row.selected_index) {
-                for (u32 iii = 0; iii < lens[ii]; iii++) {
-                  u32 pos = XYToPos(table_x+col_x_pos+iii, line+i, screen_dimensions.width);
-                  tui->frame_buffer[pos].background = ANSI_WHITE;
-                  tui->frame_buffer[pos].foreground = ANSI_BLACK;
-                  tui->frame_buffer[pos].bytes[0] = ' ';
-                }
-              }
-              MemoryZero(tmp_buffer, 64);
-              if (ii == 0) {
-                sprintf(tmp_buffer, "%s", COMMODITIES[i].name);
-              } else if (ii == 1) {
-                sprintf(tmp_buffer, "%s", COMMODITIES[i].unit == StorageUnitKg ? "kg" : "cont");
-              } else if (ii == 2) {
-                sprintf(tmp_buffer, "%d", qty);
-              } else if (ii == 3) {
-                sprintf(tmp_buffer, "%d", (u32)priceForCommodity(i, qty, true));
-              } else if (ii == 4) {
-                sprintf(tmp_buffer, "%d", (u32)priceForCommodity(i, qty, false));
-              } else if (ii == 5) {
-                sprintf(tmp_buffer, "%d", state->me.commodities[i]);
-              }
-              renderStrToBuffer(tui->frame_buffer, table_x+col_x_pos, line+i, tmp_buffer, screen_dimensions);
-            }
+            rows[i].type = c.type;
+            rows[i].unit = c.unit;
+            rows[i].bid = priceForCommodity(i, qty, true);
+            rows[i].ask = priceForCommodity(i, qty, false);
+            rows[i].qty = qty;
+            rows[i].owned = state->me.commodities[i];
           }
+          renderTable(tui, info, state->row.selected_index, MARKET_COMMODITY_FIELDS, 1, rows, sizeof(MarketCommodity));
         } break;
         case Tab_Count: {} break;
       }

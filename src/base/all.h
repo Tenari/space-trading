@@ -189,6 +189,10 @@
 # define assertBreak() (*(volatile int*)0 = 0)
 #endif
 
+#ifndef offsetof
+#define offsetof(st, m) ((size_t)&(((st*)0)->m))
+#endif
+
 #if ENABLE_ASSERT
 # define assert(c) stmnt( if (!(c)){ assertBreak(); } )
 #else
@@ -319,12 +323,37 @@ typedef enum Utf8Character {
   Utf8Character_Count,
 } Utf8Character;
 
+typedef enum FieldType {
+  FieldTypeU8,
+  FieldTypeU16,
+  FieldTypeU32,
+  FieldTypeFloat,
+  FieldTypeString,
+  FieldTypeEnum,
+  FieldType_Count,
+} FieldType;
+
+typedef struct FieldDescriptor {
+  str name;
+  FieldType type;
+  size_t offset;
+  int width;  // column width for display
+  str* enum_vals;
+} FieldDescriptor;
+
 typedef struct Box {
   u32 x;
   u32 y;
   u32 height;
   u32 width;
 } Box;
+
+typedef struct TableDrawInfo {
+  u32 x_offset;
+  u32 y_offset;
+  u32 rows;
+  u32 cols;
+} TableDrawInfo;
 
 typedef struct Dim2 {
   u16 height;
