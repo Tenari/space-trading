@@ -126,12 +126,14 @@ typedef struct GameState {
   LoginState login_state;
   MenuState menu;
   MenuState row; // for tracking which row of a table the user has selected
+  MenuState modal_choice;
   UDPMessage keep_alive_msg;
   UDPClient client;
   StringChunkList message_input;
   StarSystem map[STAR_SYSTEM_COUNT];
   Pos2 pos;
   StarSystem current;
+  bool modal;
 } GameState;
 
 ///// GLOBALS
@@ -702,7 +704,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         } break;
         case TabStation: {
           if (input_buffer[0] == 'q' || user_pressed_esc) {
-            should_quit = true;
+            if (state->modal) {
+              state->modal = !state->modal;
+            } else {
+              should_quit = true;
+            }
           }
           if (user_pressed_up) {
             if (state->row.selected_index == 0) {
@@ -716,8 +722,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             } else {
               state->row.selected_index += 1;
             }
-          } else if (user_pressed_enter) {
-            // TODO they are trying to trade a commodity
           }
           renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "Welcome to ", screen_dimensions);
           renderStrToBuffer(tui->frame_buffer, box.x+2+11, box.y+1, state->current.name, screen_dimensions);
@@ -739,6 +743,55 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             rows[i].owned = state->me.commodities[i];
           }
           renderTable(tui, info, state->row.selected_index, MARKET_COMMODITY_FIELDS, 1, rows, sizeof(MarketCommodity));
+
+          if (user_pressed_enter) {
+            state->modal = !state->modal;
+            if (state->modal) {
+              state->modal_choice.len = 2;
+              state->modal_choice.selected_index = 0;
+            }
+          }
+          if (state->modal) {
+            if (user_pressed_right) {
+              state->modal_choice.selected_index = 1;
+            } else if (user_pressed_left) {
+              state->modal_choice.selected_index = 0;
+            }
+            // draw the "purchase order" modal
+            Box modal_outline = {
+              .x = (tui->screen_dimensions.width - 50) / 2,
+              .y = (tui->screen_dimensions.height - 15) / 2,
+              .height = 15,
+              .width = 50,
+            };
+            drawAnsiBox(tui->frame_buffer, modal_outline, tui->screen_dimensions, false);
+            str cname = COMMODITIES[state->row.selected_index].name;
+            renderStrToBuffer(tui->frame_buffer, modal_outline.x+(modal_outline.width/2)-strlen(cname), modal_outline.y+1, cname, screen_dimensions);
+            u32 y_off = modal_outline.y+2;
+            u32 buy_x = modal_outline.x+2;
+            u32 sell_x = modal_outline.x+modal_outline.width-6;
+            renderStrToBuffer(tui->frame_buffer, buy_x, y_off, "Buy", screen_dimensions);
+            renderStrToBuffer(tui->frame_buffer, sell_x, y_off, "Sell", screen_dimensions);
+            if (state->modal_choice.selected_index == 0) {
+              u32 pos = XYToPos(buy_x, y_off, tui->screen_dimensions.width);
+              tui->frame_buffer[pos].background = ANSI_WHITE;
+              tui->frame_buffer[pos].foreground = ANSI_BLACK;
+              tui->frame_buffer[pos+1].background = ANSI_WHITE;
+              tui->frame_buffer[pos+1].foreground = ANSI_BLACK;
+              tui->frame_buffer[pos+2].background = ANSI_WHITE;
+              tui->frame_buffer[pos+2].foreground = ANSI_BLACK;
+            } else {
+              u32 pos = XYToPos(sell_x, y_off, tui->screen_dimensions.width);
+              tui->frame_buffer[pos].background = ANSI_WHITE;
+              tui->frame_buffer[pos].foreground = ANSI_BLACK;
+              tui->frame_buffer[pos+1].background = ANSI_WHITE;
+              tui->frame_buffer[pos+1].foreground = ANSI_BLACK;
+              tui->frame_buffer[pos+2].background = ANSI_WHITE;
+              tui->frame_buffer[pos+2].foreground = ANSI_BLACK;
+              tui->frame_buffer[pos+3].background = ANSI_WHITE;
+              tui->frame_buffer[pos+3].foreground = ANSI_BLACK;
+            }
+          }
         } break;
         case Tab_Count: {} break;
       }
