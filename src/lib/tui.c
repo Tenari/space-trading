@@ -95,15 +95,6 @@ fn RGB rgbDarken(RGB color, f32 factor) {
   return result;
 }
 
-/*
-fn RGB ansiToRGB(u8 ansi) {
-  ansi -= 16;
-  u8 b = ansi % 51;
-  ansi -= ()
-  u8 g = 
-}
-*/
-
 fn bool rgbEq(RGB a, RGB b) {
     return a.r == b.r && a.g == b.g && a.b == b.b;
 }
@@ -134,6 +125,20 @@ fn TuiState tuiInit(Arena* a, u64 buffer_len) {
 fn void copyStr(u8* bytes, str cstring) {
   for (u32 i = 0; i < strlen(cstring); i++) {
     bytes[i] = cstring[i];
+  }
+}
+
+fn void clearBox(TuiState* tui, Box box) {
+  for (u32 i = 0; i < box.height; i++) {
+    for (u32 ii = 0; ii < box.width; ii++) {
+      u32 pos = XYToPos(box.x+ii, box.y+i, tui->screen_dimensions.width);
+      tui->frame_buffer[pos].background = 0;
+      tui->frame_buffer[pos].foreground = 0;
+      tui->frame_buffer[pos].bytes[0] = 0;
+      tui->frame_buffer[pos].bytes[1] = 0;
+      tui->frame_buffer[pos].bytes[2] = 0;
+      tui->frame_buffer[pos].bytes[3] = 0;
+    }
   }
 }
 

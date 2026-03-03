@@ -34,6 +34,14 @@ typedef enum Tab {
   Tab_Count,
 } Tab;
 
+typedef enum StationTabStates {
+  StationTabStateTable,
+  StationTabStateTransact,
+  StationTabStateResult,
+  StationTabStateLoading,
+  StationTabStates_Count,
+} StationTabStates;
+
 typedef enum Screen {
   ScreenLogin,
   ScreenCreateCharacter,
@@ -74,6 +82,12 @@ typedef struct EntityList {
   Entity* items;
 } EntityList;
 
+typedef struct TransactionResult {
+  bool buying;
+  u32 qty;
+  u32 cr;
+} TransactionResult;
+
 typedef struct ParsedServerMessage {
   Message type;
   u16 port;
@@ -86,6 +100,8 @@ typedef struct ParsedServerMessage {
   Pos2u8 positions[STAR_SYSTEM_COUNT];
   PlanetType planet_types[MAX_PLANETS*STAR_SYSTEM_COUNT];
   StarSystem sys;
+  PlayerShip ship;
+  TransactionResult tx_result;
   //Entity entities[PARSED_CLIENT_ENTITY_LEN];
   //u64 ids[PARSED_IDS_LEN];
 } ParsedServerMessage;
@@ -133,7 +149,8 @@ typedef struct GameState {
   StarSystem map[STAR_SYSTEM_COUNT];
   Pos2 pos;
   StarSystem current;
-  bool modal;
+  StationTabStates station_tab_state;
+  TransactionResult tx_result;
 } GameState;
 
 ///// GLOBALS
@@ -365,15 +382,22 @@ fn void clearServerSentState() {
 }
 
 fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 socket) {
-  Message msg_type = message[0];
+  u64 msg_pos = 0;
+  Message msg_type = message[msg_pos++];
   dbg("handleIncomingMessage() of len=%d, message=%s\n", len, MESSAGE_STRINGS[msg_type]);
   u8List bytes = {len, len, message};
-  u64 msg_pos = 1;
   ParsedServerMessage parsed = {0};
   parsed.type = msg_type;
   switch (msg_type) {
     case MessageNewAccountCreated:
     case MessageBadPw: {/*nothing to parse but the type*/} break;
+    case MessageTransactionResult: {
+      parsed.tx_result.buying = message[msg_pos++];
+      parsed.tx_result.qty = readU32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+      parsed.tx_result.cr = readU32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+    } break;
     case MessageStarPositions: {
       u32 star_msg_size = 2+MAX_PLANETS;
       for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
@@ -391,6 +415,36 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
         for (u32 ii = 0; ii < Commodity_Count; ii++) {
           parsed.sys.planets[i].commodities[ii] = message[msg_pos++];
         }
+      }
+    } break;
+    case MessagePlayerDetails: {
+      parsed.ship.type = message[msg_pos++];
+      parsed.ship.drive_efficiency = message[msg_pos++];
+      parsed.ship.life_support_efficiency = message[msg_pos++];
+      parsed.ship.vacuum_cargo_slots = readU16FromBufferLE(message + msg_pos);
+      msg_pos += 2;
+      parsed.ship.climate_cargo_slots = readU16FromBufferLE(message + msg_pos);
+      msg_pos += 2;
+      parsed.ship.passenger_berths = readU16FromBufferLE(message + msg_pos);
+      msg_pos += 2;
+      parsed.ship.passenger_amenities_flags = readU16FromBufferLE(message + msg_pos);
+      msg_pos += 2;
+      parsed.ship.smugglers_hold_cu_m = readU16FromBufferLE(message + msg_pos);
+      msg_pos += 2;
+      parsed.ship.remaining_mortgage = readU32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+      parsed.ship.interest_rate = readF32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+      parsed.ship.cu_m_fuel = readU32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+      parsed.ship.cu_m_o2 = readU32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+      parsed.ship.credits = readF32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+      parsed.ship.id = readU64FromBufferLE(message + msg_pos);
+      msg_pos += 8;
+      for (u32 i = 0; i < Commodity_Count; i++, msg_pos += 4) {
+        parsed.ship.commodities[i] = readU32FromBufferLE(message + msg_pos);
       }
     } break;
     case MessageCharacterId: {
@@ -446,6 +500,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
     fflush(stdout);
     return should_quit;
   }
+  char sbuf[512] = {0};
 
   // process server messages
   u32 msg_iters = 0;
@@ -454,6 +509,30 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   while (next_net_msg != NULL) {
     msg_iters += 0;
     switch (msg.type) {
+      case MessageTransactionResult: {
+        state->station_tab_state = StationTabStateResult;
+        MemoryCopyStruct(&state->tx_result, &msg.tx_result);
+      } break;
+      case MessagePlayerDetails: {
+        if (msg.ship.id == state->me.id) {
+          state->me.type = msg.ship.type;
+          state->me.drive_efficiency = msg.ship.drive_efficiency;
+          state->me.life_support_efficiency = msg.ship.life_support_efficiency;
+          state->me.vacuum_cargo_slots = msg.ship.vacuum_cargo_slots;
+          state->me.climate_cargo_slots = msg.ship.climate_cargo_slots;
+          state->me.passenger_berths = msg.ship.passenger_berths;
+          state->me.passenger_amenities_flags = msg.ship.passenger_amenities_flags;
+          state->me.smugglers_hold_cu_m = msg.ship.smugglers_hold_cu_m;
+          state->me.remaining_mortgage = msg.ship.remaining_mortgage;
+          state->me.interest_rate = msg.ship.interest_rate;
+          state->me.cu_m_fuel = msg.ship.cu_m_fuel;
+          state->me.cu_m_o2 = msg.ship.cu_m_o2;
+          state->me.credits = msg.ship.credits;
+          for (u32 i = 0; i < Commodity_Count; i++) {
+            state->me.commodities[i] = msg.ship.commodities[i];
+          }
+        }
+      } break;
       case MessageStarPositions: {
         for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
           state->map[i].x = msg.positions[i].x;
@@ -557,7 +636,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       }
 
       //// RENDERING
-      char tmp_buffer[64] = {0};
       u16 line = 2;
       // 1. draw the outline
       Box b = { .x = 2, .y = line, .width = screen_dimensions.width - 5, .height = screen_dimensions.height - 5 };
@@ -581,8 +659,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       f32 rm = r / 12.0;
       u32 n = 12 * 4;
       u32 payment = principal_borrowed * (rm*pow((1.0+rm),n))/(pow((1+rm),n) - 1);
-      sprintf(tmp_buffer, "Mortgage: $%d @ %f%% = $%d minimum payment per turn", selected_ship_cost - STARTING_DOWN_PAYMENT, mortgage_rate, payment);
-      renderStrToBuffer(tui->frame_buffer, 5, ++line, tmp_buffer, screen_dimensions);
+      sprintf(sbuf, "Mortgage: $%d @ %f%% = $%d minimum payment per turn", selected_ship_cost - STARTING_DOWN_PAYMENT, mortgage_rate, payment);
+      renderStrToBuffer(tui->frame_buffer, 5, ++line, sbuf, screen_dimensions);
       line++;
       // the table
       TableDrawInfo info = {
@@ -701,13 +779,33 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           if (input_buffer[0] == 'q' || user_pressed_esc) {
             should_quit = true;
           }
+          renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, SHIP_TYPE_STRINGS[state->me.type], screen_dimensions);
+          renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+2, "Credits: ", screen_dimensions);
+          MemoryZero(sbuf, 512);
+          sprintf(sbuf, "%.2f", state->me.credits);
+          renderStrToBuffer(tui->frame_buffer, box.x+15, box.y+2, sbuf, screen_dimensions);
+          for (u32 i = 0; i < Commodity_Count; i++) {
+            MemoryZero(sbuf, 512);
+            sprintf(sbuf, "%-42s %d", COMMODITY_STRINGS[i], state->me.commodities[i]);
+            renderStrToBuffer(tui->frame_buffer, box.x+4, box.y+4+i, sbuf, screen_dimensions);
+          }
         } break;
         case TabStation: {
           if (input_buffer[0] == 'q' || user_pressed_esc) {
-            if (state->modal) {
-              state->modal = !state->modal;
-            } else {
-              should_quit = true;
+            switch (state->station_tab_state) {
+              case StationTabStateTable:
+                should_quit = true;
+                break;
+              case StationTabStateTransact:
+                state->station_tab_state = StationTabStateTable;
+                break;
+              case StationTabStateResult:
+                state->station_tab_state = StationTabStateTransact;
+                break;
+              case StationTabStateLoading:
+                state->station_tab_state = StationTabStateTable;
+                break;
+              case StationTabStates_Count: assert(false && "something has gone horribly wrong");
             }
           }
           if (user_pressed_up) {
@@ -744,52 +842,130 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
           renderTable(tui, info, state->row.selected_index, MARKET_COMMODITY_FIELDS, 1, rows, sizeof(MarketCommodity));
 
-          if (user_pressed_enter) {
-            state->modal = !state->modal;
-            if (state->modal) {
-              state->modal_choice.len = 2;
-              state->modal_choice.selected_index = 0;
-            }
-          }
-          if (state->modal) {
+          if (state->station_tab_state != StationTabStateTable) {
             if (user_pressed_right) {
               state->modal_choice.selected_index = 1;
             } else if (user_pressed_left) {
               state->modal_choice.selected_index = 0;
+            } else if (user_pressed_a_number) {
+              String next_char = { 1, 2, (char*)input_buffer };
+              stringChunkListAppend(&state->string_arena, &state->message_input, next_char);
+            } else if (user_pressed_backspace) {
+              stringChunkListDeleteLast(&state->string_arena, &state->message_input);
             }
-            // draw the "purchase order" modal
+
+            // draw the modal
+            bool buy_selected = state->modal_choice.selected_index == 0;
             Box modal_outline = {
               .x = (tui->screen_dimensions.width - 50) / 2,
               .y = (tui->screen_dimensions.height - 15) / 2,
               .height = 15,
               .width = 50,
             };
+            clearBox(tui, modal_outline);
             drawAnsiBox(tui->frame_buffer, modal_outline, tui->screen_dimensions, false);
-            str cname = COMMODITIES[state->row.selected_index].name;
-            renderStrToBuffer(tui->frame_buffer, modal_outline.x+(modal_outline.width/2)-strlen(cname), modal_outline.y+1, cname, screen_dimensions);
             u32 y_off = modal_outline.y+2;
-            u32 buy_x = modal_outline.x+2;
-            u32 sell_x = modal_outline.x+modal_outline.width-6;
-            renderStrToBuffer(tui->frame_buffer, buy_x, y_off, "Buy", screen_dimensions);
-            renderStrToBuffer(tui->frame_buffer, sell_x, y_off, "Sell", screen_dimensions);
-            if (state->modal_choice.selected_index == 0) {
-              u32 pos = XYToPos(buy_x, y_off, tui->screen_dimensions.width);
-              tui->frame_buffer[pos].background = ANSI_WHITE;
-              tui->frame_buffer[pos].foreground = ANSI_BLACK;
-              tui->frame_buffer[pos+1].background = ANSI_WHITE;
-              tui->frame_buffer[pos+1].foreground = ANSI_BLACK;
-              tui->frame_buffer[pos+2].background = ANSI_WHITE;
-              tui->frame_buffer[pos+2].foreground = ANSI_BLACK;
-            } else {
-              u32 pos = XYToPos(sell_x, y_off, tui->screen_dimensions.width);
-              tui->frame_buffer[pos].background = ANSI_WHITE;
-              tui->frame_buffer[pos].foreground = ANSI_BLACK;
-              tui->frame_buffer[pos+1].background = ANSI_WHITE;
-              tui->frame_buffer[pos+1].foreground = ANSI_BLACK;
-              tui->frame_buffer[pos+2].background = ANSI_WHITE;
-              tui->frame_buffer[pos+2].foreground = ANSI_BLACK;
-              tui->frame_buffer[pos+3].background = ANSI_WHITE;
-              tui->frame_buffer[pos+3].foreground = ANSI_BLACK;
+            str cname = COMMODITIES[state->row.selected_index].name;
+            if (state->station_tab_state == StationTabStateResult) {
+              if (state->tx_result.buying) {
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-10)/2), y_off++, "Purchased!", screen_dimensions);
+              } else {
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-5)/2), y_off++, "Sold!", screen_dimensions);
+              }
+              MemoryZero(sbuf, 512);
+              sprintf(sbuf, "%d %s", state->tx_result.qty, cname);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-3)/2), y_off++, "for", screen_dimensions);
+              MemoryZero(sbuf, 512);
+              sprintf(sbuf, "%d credits", state->tx_result.cr);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
+              y_off++;
+              u32 exit_x = modal_outline.x+((modal_outline.width-4)/2);
+              u32 pos = XYToPos(exit_x, y_off, tui->screen_dimensions.width);
+              for (u32 i = 0; i < 4; i++) {
+                tui->frame_buffer[pos+i].background = ANSI_WHITE;
+                tui->frame_buffer[pos+i].foreground = ANSI_BLACK;
+              }
+              tui->cursor.x = exit_x;
+              tui->cursor.y = y_off;
+              renderStrToBuffer(tui->frame_buffer, exit_x, y_off++, "EXIT", screen_dimensions);
+
+              if (user_pressed_enter) {
+                state->station_tab_state = StationTabStateTable;
+              }
+            } else if (state->station_tab_state == StationTabStateLoading) {
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+2, y_off, "Loading...", screen_dimensions);
+            } else { // StationTabStateTransact
+              // draw the "purchase order" modal
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+(modal_outline.width/2)-strlen(cname), modal_outline.y+1, cname, screen_dimensions);
+              u32 buy_x = modal_outline.x+2;
+              u32 sell_x = modal_outline.x+modal_outline.width-6;
+              renderStrToBuffer(tui->frame_buffer, buy_x, y_off, "Buy", screen_dimensions);
+              renderStrToBuffer(tui->frame_buffer, sell_x, y_off, "Sell", screen_dimensions);
+              if (buy_selected) {
+                u32 pos = XYToPos(buy_x, y_off, tui->screen_dimensions.width);
+                tui->frame_buffer[pos].background = ANSI_WHITE;
+                tui->frame_buffer[pos].foreground = ANSI_BLACK;
+                tui->frame_buffer[pos+1].background = ANSI_WHITE;
+                tui->frame_buffer[pos+1].foreground = ANSI_BLACK;
+                tui->frame_buffer[pos+2].background = ANSI_WHITE;
+                tui->frame_buffer[pos+2].foreground = ANSI_BLACK;
+              } else {
+                u32 pos = XYToPos(sell_x, y_off, tui->screen_dimensions.width);
+                tui->frame_buffer[pos].background = ANSI_WHITE;
+                tui->frame_buffer[pos].foreground = ANSI_BLACK;
+                tui->frame_buffer[pos+1].background = ANSI_WHITE;
+                tui->frame_buffer[pos+1].foreground = ANSI_BLACK;
+                tui->frame_buffer[pos+2].background = ANSI_WHITE;
+                tui->frame_buffer[pos+2].foreground = ANSI_BLACK;
+                tui->frame_buffer[pos+3].background = ANSI_WHITE;
+                tui->frame_buffer[pos+3].foreground = ANSI_BLACK;
+              }
+              y_off++;
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-8)/2), y_off++, "Quantity", screen_dimensions);
+              renderStringChunkList(tui, &state->message_input, modal_outline.x+8, y_off);
+              tui->cursor.x = modal_outline.x + 8 + state->message_input.total_size;
+              tui->cursor.y = y_off++;
+              if (buy_selected) {
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-4)/2), y_off++, "Cost", screen_dimensions);
+              } else {
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-6)/2), y_off++, "Profit", screen_dimensions);
+              }
+              String input_q_str = stringChunkToString(&permanent_arena, state->message_input);
+              u32 input_quantity = atoi(input_q_str.bytes);
+              u32 credits = input_quantity * (buy_selected ? rows[state->row.selected_index].ask : rows[state->row.selected_index].bid);
+              arenaDealloc(&permanent_arena, input_q_str.capacity);
+              MemoryZero(sbuf, 512);
+              sprintf(sbuf, "%d", credits);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+8, y_off++, sbuf, screen_dimensions);
+
+              if (user_pressed_enter) {
+                // send the "purchase" or "sell" message to server
+                // get back new "status" of things
+                u32 msg_idx = 0;
+                UDPMessage msg = {0};
+                msg.address = udp->server_address;
+                // 1. msg type/CommandType
+                msg.bytes[msg_idx++] = CommandTransact;
+                // 2. buy?
+                msg.bytes[msg_idx++] = buy_selected;
+                // 3. quantity
+                msg_idx += writeU32ToBufferLE(msg.bytes + msg_idx, input_quantity);
+                // 4. commodity
+                msg.bytes[msg_idx++] = rows[state->row.selected_index].type;
+                msg.bytes_len = msg_idx;
+
+                outgoingMessageQueuePush(network_send_queue, &msg);
+
+                state->station_tab_state = StationTabStateLoading;
+              }
+            }
+          } else {
+            // we are on the table
+            if (user_pressed_enter) {
+              state->station_tab_state = StationTabStateTransact;
+              state->modal_choice.len = 2;
+              state->modal_choice.selected_index = 0;
             }
           }
         } break;

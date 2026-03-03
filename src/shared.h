@@ -341,9 +341,11 @@ typedef struct Planet {
 } Planet;
 
 typedef struct StarSystem {
+  bool changed;
   u32 x;
   u32 y;
   u32 crime;
+  u32 idx;
   str name;
   Planet planets[MAX_PLANETS];
 } StarSystem;
@@ -413,6 +415,7 @@ typedef enum CommandType {
   CommandKeepAlive,
   CommandLogin,
   CommandCreateCharacter,
+  CommandTransact,
   CommandType_Count,
 } CommandType;
 static const char* command_type_strings[] = {
@@ -431,6 +434,8 @@ typedef enum Message {
   MessageNewAccountCreated,
   MessageStarPositions,
   MessageSystemCommodities,
+  MessagePlayerDetails,
+  MessageTransactionResult,
   Message_Count,
 } Message;
 static const char* MESSAGE_STRINGS[] = {
@@ -440,6 +445,8 @@ static const char* MESSAGE_STRINGS[] = {
   "NewAccountCreated",
   "StarPositions",
   "SystemCommodities",
+  "PlayerDetails",
+  "TransactionResult",
 };
 
 #endif //GAMESHARED_H

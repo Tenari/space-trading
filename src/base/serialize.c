@@ -12,6 +12,17 @@ fn u64 writeU64ToBufferLE(u8* buffer, u64 value) {
   return 8;// number of bytes written
 }
 
+fn u64 writeF32ToBufferLE(u8* buffer, f32 value) {
+  u32 bits;
+  memcpy(&bits, &value, sizeof(u32));  // reinterpret float bits as integer
+
+  buffer[0] = (u8)(bits & 0xFF);
+  buffer[1] = (u8)((bits >> 8) & 0xFF);
+  buffer[2] = (u8)((bits >> 16) & 0xFF);
+  buffer[3] = (u8)((bits >> 24) & 0xFF);
+  return 4;// number of bytes written
+}
+
 fn u64 writeU32ToBufferLE(u8* buffer, u32 value) {
   buffer[0] = (u8)(value & 0xFF);
   buffer[1] = (u8)((value >> 8) & 0xFF);
@@ -43,6 +54,18 @@ fn u64 readU64FromBufferLE(u8 *buffer) {
            ((u64)buffer[5] << 40) |
            ((u64)buffer[6] << 48) |
            ((u64)buffer[7] << 56);
+}
+
+fn f32 readF32FromBufferLE(u8 *buf) {
+  u32 bits = 0;
+  bits |= (u32)(u8)buf[0] <<  0;
+  bits |= (u32)(u8)buf[1] <<  8;
+  bits |= (u32)(u8)buf[2] << 16;
+  bits |= (u32)(u8)buf[3] << 24;
+
+  f32 value;
+  memcpy(&value, &bits, sizeof(f32));
+  return value;
 }
 
 fn u32 readU32FromBufferLE(u8 *buffer) {
