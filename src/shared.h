@@ -324,6 +324,14 @@ typedef struct PlayerShip {
   u32 commodities[Commodity_Count];
 } PlayerShip;
 
+fn u32 usedVacuumCargoSlots(PlayerShip ship) {
+  u32 used_cargo = 0;
+  for (u32 i = 0; i < Commodity_Count; i++) {
+    used_cargo += ship.commodities[i];
+  }
+  return used_cargo;
+}
+
 typedef enum PlanetType {
   PlanetTypeNull,
   PlanetTypeEarth,

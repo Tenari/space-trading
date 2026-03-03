@@ -779,15 +779,23 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           if (input_buffer[0] == 'q' || user_pressed_esc) {
             should_quit = true;
           }
-          renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, SHIP_TYPE_STRINGS[state->me.type], screen_dimensions);
-          renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+2, "Credits: ", screen_dimensions);
+          u32 yoff = box.y+1;
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, SHIP_TYPE_STRINGS[state->me.type], screen_dimensions);
+
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff, "Credits: ", screen_dimensions);
           MemoryZero(sbuf, 512);
           sprintf(sbuf, "%.2f", state->me.credits);
-          renderStrToBuffer(tui->frame_buffer, box.x+15, box.y+2, sbuf, screen_dimensions);
+          renderStrToBuffer(tui->frame_buffer, box.x+15, yoff++, sbuf, screen_dimensions);
+
+          u32 used_cargo = usedVacuumCargoSlots(state->me);
+          MemoryZero(sbuf, 512);
+          sprintf(sbuf, "Cargo: %d / %d", used_cargo, state->me.vacuum_cargo_slots);
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+
           for (u32 i = 0; i < Commodity_Count; i++) {
             MemoryZero(sbuf, 512);
             sprintf(sbuf, "%-42s %d", COMMODITY_STRINGS[i], state->me.commodities[i]);
-            renderStrToBuffer(tui->frame_buffer, box.x+4, box.y+4+i, sbuf, screen_dimensions);
+            renderStrToBuffer(tui->frame_buffer, box.x+4, yoff+4+i, sbuf, screen_dimensions);
           }
         } break;
         case TabStation: {

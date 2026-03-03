@@ -625,15 +625,14 @@ fn void* gameLoop(void* params) {
             bool is_buying_from_system = msg.byte;
             Account* account = &state.accounts[client->account_id];
             StarSystem* sys = findAccountsSystem(account);
-            printf("%d %lld %s\n", account->id, account->ship.id, sys->name);
             u32 total_available = sys->planets[0].commodities[msg.commodity] + sys->planets[1].commodities[msg.commodity] + sys->planets[2].commodities[msg.commodity];
             u32 qty_traded = 0;
             u32 credit_value = 0;
             if (is_buying_from_system) {
-              printf("is buying from system\n");
-              for (u32 amount_to_buy = Min(msg.qty, total_available); amount_to_buy > 0; amount_to_buy--, total_available--) {
+              u32 ship_space = account->ship.vacuum_cargo_slots - usedVacuumCargoSlots(account->ship);
+              for (u32 amount_to_buy = Min(msg.qty, total_available); amount_to_buy > 0; amount_to_buy--, total_available--, ship_space--) {
                 u32 price = priceForCommodity(msg.commodity, total_available, false);
-                if (price > account->ship.credits) {
+                if (price > account->ship.credits || ship_space == 0) {
                   amount_to_buy = 0;
                   break;
                 }
