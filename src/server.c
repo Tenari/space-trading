@@ -766,6 +766,8 @@ fn void* gameLoop(void* params) {
                 //.cu_m_o2; // we are just saying you can buy as much o2 as you want
                 .id = ++state.next_eid, // start from 1
               };
+              player_ship.commodities[CommodityHydrogenFuel] = 2000;
+              player_ship.commodities[CommodityOxygen] = 1000;
               account->ship = player_ship;
               printf("ship_type=%s, client_handle=%d, acct_id=%d\n", SHIP_TYPE_STRINGS[msg.byte], client_handle, account->id);
               u32 starting_system_idx = rand() % STAR_SYSTEM_COUNT;

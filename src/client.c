@@ -23,6 +23,7 @@
 #define GOAL_LOOP_US 1000000/GOAL_LOOPS_PER_S
 #define LOGIN_NAME_BUFFER_LEN 16
 #define PARSED_SERVER_MESSAGE_THREAD_QUEUE_LEN 16
+#define SBUFLEN (512)
 
 ///// TYPES
 typedef enum Tab {
@@ -148,6 +149,7 @@ typedef struct GameState {
   StringChunkList message_input;
   StarSystem map[STAR_SYSTEM_COUNT];
   Pos2 pos;
+  u32 destination_sys_idx;
   StarSystem current;
   StationTabStates station_tab_state;
   TransactionResult tx_result;
@@ -500,7 +502,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
     fflush(stdout);
     return should_quit;
   }
-  char sbuf[512] = {0};
+  char sbuf[SBUFLEN] = {0};
 
   // process server messages
   u32 msg_iters = 0;
@@ -535,6 +537,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       } break;
       case MessageStarPositions: {
         for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+          state->map[i].name = STAR_NAMES[i];
           state->map[i].x = msg.positions[i].x;
           state->map[i].y = msg.positions[i].y;
           for (u32 ii = 0; ii < MAX_PLANETS; ii++) {
@@ -544,7 +547,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       } break;
       case MessageSystemCommodities: {
         u32 sys_idx = msg.id;
-        state->current.name = STAR_NAMES[sys_idx];
+        MemoryCopyStruct(&state->current, &state->map[sys_idx]);
         for (u32 i = 0; i < MAX_PLANETS; i++) {
           for (u32 ii = 0; ii < Commodity_Count; ii++) {
             state->current.planets[i].commodities[ii] = msg.sys.planets[i].commodities[ii];
@@ -577,6 +580,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   
   // operate on screen-based input+state
   bool user_pressed_tab = input_buffer[0] == ASCII_TAB && input_buffer[1] == 0;
+  bool user_pressed_shift_tab = input_buffer[0] == '\x1b' && input_buffer[1] == '[' && input_buffer[2] == 'Z';
   bool user_pressed_esc = input_buffer[0] == ASCII_ESCAPE && input_buffer[1] == 0;
   bool user_pressed_a_number = input_buffer[0] >= '1' && input_buffer[0] <= '9' && input_buffer[1] == 0;
   bool user_pressed_up = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 65;
@@ -604,7 +608,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         state->menu.selected_index--;
       } else if (user_pressed_a_number) {
         state->menu.selected_index = input_buffer[0] - '1';
-      } else if (input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED) {
+      } else if (user_pressed_enter) {
         // save ship choice to our gamestate
         ShipTemplate template = SHIPS[state->menu.selected_index];
         state->me.type = template.type;
@@ -630,6 +634,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         outgoingMessageQueuePush(network_send_queue, &msg);
 
         state->screen = ScreenMainGame;
+        state->menu.len = Tab_Count;
+        state->menu.selected_index = 0;
       }
       if (state->menu.selected_index >= state->menu.len) {
         state->menu.selected_index = 0;
@@ -672,8 +678,18 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
     case ScreenMainGame: {
       if (user_pressed_tab) {
         state->menu.selected_index += 1;
-        if (state->menu.selected_index > state->menu.len) {
+        if (state->menu.selected_index >= state->menu.len) {
           state->menu.selected_index = 0;
+        }
+        if (state->menu.selected_index == TabStation) {
+          state->row.len = Commodity_Count;
+          state->row.selected_index = 0;
+        }
+      } else if (user_pressed_shift_tab) {
+        if (state->menu.selected_index > 0) {
+          state->menu.selected_index -= 1;
+        } else {
+          state->menu.selected_index = state->menu.len - 1;
         }
         if (state->menu.selected_index == TabStation) {
           state->row.len = Commodity_Count;
@@ -726,8 +742,17 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
           u32 xw = 4;
           u32 yh = 2;
+          if (box.width < MAP_WIDTH*xw) {
+            renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+2, "Your screen needs to be wider...", screen_dimensions);
+            break;
+          }
+          if (box.height < MAP_HEIGHT*yh) {
+            renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+2, "Your screen needs to be taller...", screen_dimensions);
+            break;
+          }
           u32 x_off = box.x+((box.width - MAP_WIDTH*xw)/2);
-          u32 y_off = box.y+((box.height - MAP_HEIGHT*yh)/2);
+          u32 y_off = box.y+1;
+          StarSystem dest = state->map[state->destination_sys_idx];
           for (u32 i = 0; i < MAP_WIDTH*xw; i++) {
             for (u32 ii = 0; ii < MAP_HEIGHT*yh; ii++) {
               u32 sysx = i / xw;
@@ -736,6 +761,13 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               tui->frame_buffer[bufpos].bytes[0] = ' ';
               if (state->pos.x == sysx && state->pos.y == sysy) {
                 tui->frame_buffer[bufpos].background = ANSI_WHITE;
+                tui->frame_buffer[bufpos].foreground = ANSI_BLACK;
+              } else if (state->current.x == sysx && state->current.y == sysy) {
+                // highlight the system we are currently at
+                tui->frame_buffer[bufpos].background = ANSI_HIGHLIGHT_BLUE;
+                tui->frame_buffer[bufpos].foreground = ANSI_BLACK;
+              } else if (dest.x == sysx && dest.y == sysy) {
+                tui->frame_buffer[bufpos].background = ANSI_HIGHLIGHT_RED;
                 tui->frame_buffer[bufpos].foreground = ANSI_BLACK;
               } else {
                 tui->frame_buffer[bufpos].foreground = ANSI_WHITE;
@@ -774,26 +806,91 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               strForPlanet(sys.planets[2].type)
             );
           }
+
+          // map key
+          y_off += 1+(MAP_HEIGHT*yh);
+          for (u32 i = 0; i < xw; i++) {
+            for (u32 ii = 0; ii < yh; ii++) {
+              u32 bufpos = XYToPos(x_off+i, y_off+ii, screen_dimensions.width);
+              tui->frame_buffer[bufpos].background = ANSI_HIGHLIGHT_BLUE;
+              tui->frame_buffer[bufpos].bytes[0] = ' ';
+            }
+          }
+          renderStrToBuffer(tui->frame_buffer, x_off+5, y_off++, "Your current star system:", screen_dimensions);
+          if (state->current.name) {
+            renderStrToBuffer(tui->frame_buffer, x_off+5, y_off++, state->current.name, screen_dimensions);
+          }
+          y_off++;
+          for (u32 i = 0; i < xw; i++) {
+            for (u32 ii = 0; ii < yh; ii++) {
+              u32 bufpos = XYToPos(x_off+i, y_off+ii, screen_dimensions.width);
+              tui->frame_buffer[bufpos].background = ANSI_HIGHLIGHT_RED;
+              tui->frame_buffer[bufpos].bytes[0] = ' ';
+            }
+          }
+          renderStrToBuffer(tui->frame_buffer, x_off+5, y_off++, "Flight Destination:", screen_dimensions);
+          if (dest.name) {
+            renderStrToBuffer(tui->frame_buffer, x_off+5, y_off++, dest.name, screen_dimensions);
+          }
+          y_off++;
+
+          Pos2 dest_pos = {dest.x, dest.y};
+          Pos2 curr_pos = {state->current.x, state->current.y};
+          u32 projected_fuel_cost = fuelCostForTravel(state->me.drive_efficiency, curr_pos, dest_pos);
+          bool have_enough_fuel = projected_fuel_cost < state->me.commodities[CommodityHydrogenFuel];
+          MemoryZero(sbuf, SBUFLEN);
+          if (have_enough_fuel) {
+            sprintf(
+              sbuf,
+              "Fuel Cost: %dkg / %dkg",
+              projected_fuel_cost,
+              state->me.commodities[CommodityHydrogenFuel]
+            );
+          } else {
+            sprintf(
+              sbuf,
+              "Not enough Fuel! Need %dkg more",
+              projected_fuel_cost - state->me.commodities[CommodityHydrogenFuel]
+            );
+            for (u32 i = 0; i < strlen(sbuf); i++) {
+              u32 bufpos = XYToPos(x_off+i, y_off, screen_dimensions.width);
+              tui->frame_buffer[bufpos].background = ANSI_HIGHLIGHT_RED;
+            }
+          }
+          renderStrToBuffer(tui->frame_buffer, x_off, y_off++, sbuf, screen_dimensions);
+
+          if (user_pressed_enter) {
+            for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+              if (state->pos.x == state->map[i].x && state->pos.y == state->map[i].y) {
+                state->destination_sys_idx = i;
+              }
+            }
+          }
         } break;
         case TabShip: {
           if (input_buffer[0] == 'q' || user_pressed_esc) {
             should_quit = true;
           }
           u32 yoff = box.y+1;
-          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, SHIP_TYPE_STRINGS[state->me.type], screen_dimensions);
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "Player: %s", state->login_state.name.bytes);
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
 
-          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff, "Credits: ", screen_dimensions);
-          MemoryZero(sbuf, 512);
-          sprintf(sbuf, "%.2f", state->me.credits);
-          renderStrToBuffer(tui->frame_buffer, box.x+15, yoff++, sbuf, screen_dimensions);
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "Ship Type: %s", SHIP_TYPE_STRINGS[state->me.type]);
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "Credits: %.2f", state->me.credits);
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
 
           u32 used_cargo = usedVacuumCargoSlots(state->me);
-          MemoryZero(sbuf, 512);
+          MemoryZero(sbuf, SBUFLEN);
           sprintf(sbuf, "Cargo: %d / %d", used_cargo, state->me.vacuum_cargo_slots);
           renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
 
           for (u32 i = 0; i < Commodity_Count; i++) {
-            MemoryZero(sbuf, 512);
+            MemoryZero(sbuf, SBUFLEN);
             sprintf(sbuf, "%-42s %d", COMMODITY_STRINGS[i], state->me.commodities[i]);
             renderStrToBuffer(tui->frame_buffer, box.x+4, yoff+4+i, sbuf, screen_dimensions);
           }
@@ -880,11 +977,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               } else {
                 renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-5)/2), y_off++, "Sold!", screen_dimensions);
               }
-              MemoryZero(sbuf, 512);
+              MemoryZero(sbuf, SBUFLEN);
               sprintf(sbuf, "%d %s", state->tx_result.qty, cname);
               renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
               renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-3)/2), y_off++, "for", screen_dimensions);
-              MemoryZero(sbuf, 512);
+              MemoryZero(sbuf, SBUFLEN);
               sprintf(sbuf, "%d credits", state->tx_result.cr);
               renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
               y_off++;
@@ -943,7 +1040,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               u32 input_quantity = atoi(input_q_str.bytes);
               u32 credits = input_quantity * (buy_selected ? rows[state->row.selected_index].ask : rows[state->row.selected_index].bid);
               arenaDealloc(&permanent_arena, input_q_str.capacity);
-              MemoryZero(sbuf, 512);
+              MemoryZero(sbuf, SBUFLEN);
               sprintf(sbuf, "%d", credits);
               renderStrToBuffer(tui->frame_buffer, modal_outline.x+8, y_off++, sbuf, screen_dimensions);
 

@@ -457,4 +457,11 @@ static const char* MESSAGE_STRINGS[] = {
   "TransactionResult",
 };
 
+fn u32 fuelCostForTravel(u32 drive_efficiency, Pos2 current, Pos2 dest) {
+  u32 x_distance = Max(current.x, dest.x) - Min(current.x, dest.x);
+  u32 y_distance = Max(current.y, dest.y) - Min(current.y, dest.y);
+  u32 fuel_per_dist = 100 - drive_efficiency;
+  return (x_distance + y_distance) * fuel_per_dist;
+}
+
 #endif //GAMESHARED_H
