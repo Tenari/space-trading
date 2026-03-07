@@ -128,6 +128,7 @@ typedef enum CommodityType {
   CommodityAlcohol,
   CommodityClothes,
   CommodityPersonalSundries,
+  CommodityIndustrialChemicals,
   Commodity_Count,
 } CommodityType;
 
@@ -153,6 +154,7 @@ global str COMMODITY_STRINGS[Commodity_Count] = {
   "Alcohol",
   "Clothes",
   "Personal Sundries (Cutlery, Toys, Misc)",
+  "Industrial Chemicals",
 };
 
 typedef enum StorageUnit {
@@ -200,39 +202,39 @@ global Commodity COMMODITIES[Commodity_Count] = {
   },
   { .type = CommodityLowGradeOre,  .unit = StorageUnitContainer,
     .name = "Low Grade Ore",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 800, .qty = 100, .consumption = 8,
   },
   { .type = CommodityHighGradeOre,  .unit = StorageUnitContainer,
     .name = "High Grade Ore",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 1200, .qty = 10, .consumption = 2,
   },
   { .type = CommodityPlastics,  .unit = StorageUnitContainer,
     .name = "Plastics",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 2000, .qty = 30, .consumption = 5,
   },
   { .type = CommodityGrain,  .unit = StorageUnitContainer,
     .name = "Grain",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 1900, .qty = 200, .consumption = 30,
   },
   { .type = CommodityMeat,  .unit = StorageUnitContainer,
     .name = "Meat",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 2100, .qty = 90, .consumption = 15,
   },
   { .type = CommoditySpices,  .unit = StorageUnitContainer,
     .name = "Spices",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 3900, .qty = 6, .consumption = 1,
   },
   { .type = CommodityElectronics,  .unit = StorageUnitContainer,
     .name = "Electronics",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 9500, .qty = 40, .consumption = 6,
   },
   { .type = CommodityGlass,  .unit = StorageUnitContainer,
     .name = "Glass",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 1400, .qty = 50, .consumption = 5,
   },
   { .type = CommodityHandTools,  .unit = StorageUnitContainer,
     .name = "Hand Tools",
-    .price = 1800, .qty = 40, .consumption = 3,
+    .price = 5000, .qty = 5, .consumption = 1,
   },
   { .type = CommoditySemiConductors,  .unit = StorageUnitContainer,
     .name = "Semi-conductors (Silicon, Arsenic, Boron)",
@@ -262,7 +264,12 @@ global Commodity COMMODITIES[Commodity_Count] = {
     .name = "Personal Sundries (Cutlery, Toys, Misc)",
     .price = 1800, .qty = 40, .consumption = 3,
   },
+  { .type = CommodityIndustrialChemicals,  .unit = StorageUnitContainer,
+    .name = "Industrial Chemicals",
+    .price = 3800, .qty = 20, .consumption = 5,
+  },
 };
+
 typedef struct MarketCommodity {
   CommodityType type;
   StorageUnit unit;
@@ -401,7 +408,7 @@ global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
   "Eltanin",
 };
 
-typedef struct {
+typedef struct XYZ {
   i32 x;
   i32 y;
   i32 z;
@@ -426,6 +433,7 @@ typedef enum CommandType {
   CommandTransact,
   CommandType_Count,
 } CommandType;
+
 static const char* command_type_strings[] = {
   "Invalid",
   "KeepAlive",
@@ -446,6 +454,7 @@ typedef enum Message {
   MessageTransactionResult,
   Message_Count,
 } Message;
+
 static const char* MESSAGE_STRINGS[] = {
   "Invalid",
   "CharacterId",

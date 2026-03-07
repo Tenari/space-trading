@@ -846,6 +846,16 @@ fn void* gameLoop(void* params) {
   return NULL;
 }
 
+fn void setHighProductionCommodity(Planet* p, CommodityType t) {
+  p->commodities[t] = (COMMODITIES[t].qty / 2) + (rand() % COMMODITIES[t].qty);
+  p->production[t] = COMMODITIES[t].consumption + (rand() % COMMODITIES[t].consumption);
+}
+
+fn void setLowProductionCommodity(Planet* p, CommodityType t) {
+  p->commodities[t] = rand() % (COMMODITIES[t].qty / 2);
+  p->production[t] = rand() % (COMMODITIES[t].consumption / 2);
+}
+
 // THE SERVER
 i32 main(i32 argc, ptr argv[]) {
   osInit();
@@ -881,41 +891,119 @@ i32 main(i32 argc, ptr argv[]) {
     state.map[i].crime = rand() % 100;
     state.map[i].x = rand() % MAP_WIDTH;
     state.map[i].y = rand() % MAP_HEIGHT;
+    // ensure all the star systems are "spaced out" a bit
     bool conflicting_pos = false;
     for (u32 ii = 0; ii < i; ii++) {
-      if (state.map[ii].x == state.map[i].x && state.map[ii].y == state.map[i].y) {
+      bool same_pos = state.map[ii].x == state.map[i].x && state.map[ii].y == state.map[i].y;
+      bool north_pos = state.map[ii].x == state.map[i].x && state.map[ii].y == state.map[i].y+1;
+      bool south_pos = state.map[ii].x == state.map[i].x && state.map[ii].y+1 == state.map[i].y;
+      bool west_pos = state.map[ii].x == state.map[i].x+1 && state.map[ii].y == state.map[i].y;
+      bool east_pos = state.map[ii].x+1 == state.map[i].x && state.map[ii].y == state.map[i].y;
+      if (same_pos || north_pos || south_pos || west_pos || east_pos) {
         conflicting_pos = true;
       } 
     }
     if (conflicting_pos) {
-      i--;
+      i--; // re-do the position calc
     }
   }
+
+  // now, build out the commodity info for the systems
   for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
     u32 planet_count = rand() % MAX_PLANETS + 1;
     for (u32 ii = 0; ii < planet_count; ii++) {
-      state.map[i].planets[ii].type = 1+(PlanetType)(rand() % (PlanetType_Count -1));
+      Planet* p = &state.map[i].planets[ii];
+      p->type = 1+(PlanetType)(rand() % (PlanetType_Count -1));
+      // default commodity + production roll
       for (u32 iii = 0; iii < Commodity_Count; iii++) {
-        state.map[i].planets[ii].commodities[iii] = rand() % 1000;
-        state.map[i].planets[ii].production[iii] = rand() % 10;
+        p->commodities[iii] = (COMMODITIES[iii].qty / 5) + (rand() % COMMODITIES[iii].qty);
+        p->production[iii] = 1 + (rand() % COMMODITIES[iii].consumption);
       }
-      switch (state.map[i].planets[ii].type) {
+      // now, override for the "specialty" of the planet
+      switch (p->type) {
         case PlanetTypeEarth: {
-          // TODO: roll the initial commodity counts
-          //  AND roll the initial (excess) production levels
-          //  earth planets do a lot of food 
+          setHighProductionCommodity(p, CommodityWater);
+          setHighProductionCommodity(p, CommodityFertilizer);
+          setHighProductionCommodity(p, CommodityGrain);
+          setHighProductionCommodity(p, CommodityMeat);
+          setHighProductionCommodity(p, CommoditySpices);
+          setHighProductionCommodity(p, CommodityAlcohol);
+
+          setLowProductionCommodity(p, CommodityHydrogenFuel);
+          setLowProductionCommodity(p, CommodityLowGradeOre);
+          setLowProductionCommodity(p, CommodityHighGradeOre);
+          setLowProductionCommodity(p, CommodityCommonMetals);
+          setLowProductionCommodity(p, CommodityRareMetals);
+          setLowProductionCommodity(p, CommodityPreciousMetals);
         } break;
         case PlanetTypeGas: {
           // a lot of fuel and chemicals
+          setHighProductionCommodity(p, CommodityHydrogenFuel);
+          setHighProductionCommodity(p, CommodityOxygen);
+          setHighProductionCommodity(p, CommodityWater);
+          setHighProductionCommodity(p, CommodityIndustrialChemicals);
+          setHighProductionCommodity(p, CommodityPlastics);
+
+          setLowProductionCommodity(p, CommodityLowGradeOre);
+          setLowProductionCommodity(p, CommodityHighGradeOre);
+          setLowProductionCommodity(p, CommodityCommonMetals);
+          setLowProductionCommodity(p, CommodityRareMetals);
+          setLowProductionCommodity(p, CommodityPreciousMetals);
+          setLowProductionCommodity(p, CommodityClothes);
+          setLowProductionCommodity(p, CommodityRawTextiles);
+          setLowProductionCommodity(p, CommodityGlass);
+          setLowProductionCommodity(p, CommodityPersonalSundries);
+          setLowProductionCommodity(p, CommodityHandTools);
+          setLowProductionCommodity(p, CommodityMeat);
         } break;
         case PlanetTypeMoon: {
           // a lot of manufactured goods
+          setHighProductionCommodity(p, CommodityPersonalSundries);
+          setHighProductionCommodity(p, CommodityClothes);
+          setHighProductionCommodity(p, CommodityAlcohol);
+          setHighProductionCommodity(p, CommodityElectronics);
+
+          setLowProductionCommodity(p, CommodityHighGradeOre);
+          setLowProductionCommodity(p, CommodityHydrogenFuel);
+          setLowProductionCommodity(p, CommodityOxygen);
+          setLowProductionCommodity(p, CommodityWater);
+          setLowProductionCommodity(p, CommodityFertilizer);
         } break;
         case PlanetTypeAsteroid: {
           // a lot of raw metals
+          setHighProductionCommodity(p, CommodityLowGradeOre);
+          setHighProductionCommodity(p, CommodityHighGradeOre);
+          setHighProductionCommodity(p, CommodityCommonMetals);
+          setHighProductionCommodity(p, CommodityRareMetals);
+          setHighProductionCommodity(p, CommodityPreciousMetals);
+          setHighProductionCommodity(p, CommoditySemiConductors);
+
+          setLowProductionCommodity(p, CommodityHydrogenFuel);
+          setLowProductionCommodity(p, CommodityOxygen);
+          setLowProductionCommodity(p, CommodityWater);
+          setLowProductionCommodity(p, CommodityFertilizer);
+          setLowProductionCommodity(p, CommodityPersonalSundries);
+          setLowProductionCommodity(p, CommodityClothes);
+          setLowProductionCommodity(p, CommodityElectronics);
+          setLowProductionCommodity(p, CommodityPlastics);
+          setLowProductionCommodity(p, CommodityHandTools);
         } break;
         case PlanetTypeStation: {
           // a lot of ??? drugs?
+          setHighProductionCommodity(p, CommodityAlcohol);
+          setHighProductionCommodity(p, CommodityPersonalSundries);
+          setHighProductionCommodity(p, CommodityClothes);
+          setHighProductionCommodity(p, CommodityElectronics);
+          setHighProductionCommodity(p, CommodityPlastics);
+          setHighProductionCommodity(p, CommodityHandTools);
+
+          setLowProductionCommodity(p, CommodityHydrogenFuel);
+          setLowProductionCommodity(p, CommodityOxygen);
+          setLowProductionCommodity(p, CommodityWater);
+          setLowProductionCommodity(p, CommodityFertilizer);
+          setLowProductionCommodity(p, CommodityMeat);
+          setLowProductionCommodity(p, CommodityGrain);
+          setLowProductionCommodity(p, CommoditySpices);
         } break;
         case PlanetTypeNull:
         case PlanetType_Count:
