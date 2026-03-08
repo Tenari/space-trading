@@ -314,6 +314,8 @@ fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
 
 typedef struct PlayerShip {
   ShipType type;
+  bool ready_to_depart;
+  u8 system_idx;
   u8 drive_efficiency;
   u8 life_support_efficiency;
   u16 vacuum_cargo_slots;
@@ -334,7 +336,9 @@ typedef struct PlayerShip {
 fn u32 usedVacuumCargoSlots(PlayerShip ship) {
   u32 used_cargo = 0;
   for (u32 i = 0; i < Commodity_Count; i++) {
-    used_cargo += ship.commodities[i];
+    if (COMMODITIES[i].unit == StorageUnitContainer) {
+      used_cargo += ship.commodities[i];
+    }
   }
   return used_cargo;
 }
@@ -431,14 +435,18 @@ typedef enum CommandType {
   CommandLogin,
   CommandCreateCharacter,
   CommandTransact,
+  CommandReadyStatus,
+  CommandSetDestination,
   CommandType_Count,
 } CommandType;
 
-static const char* command_type_strings[] = {
+static const char* command_type_strings[CommandType_Count] = {
   "Invalid",
   "KeepAlive",
   "Login",
   "CreateCharacter",
+  "ReadyStatus",
+  "SetDestination",
 };
 
 #define ENTITY_HEADER_MESSAGE_SIZE (8+8+1+1+1)
@@ -452,6 +460,7 @@ typedef enum Message {
   MessageSystemCommodities,
   MessagePlayerDetails,
   MessageTransactionResult,
+  MessageTurnTick,
   Message_Count,
 } Message;
 
@@ -464,6 +473,7 @@ static const char* MESSAGE_STRINGS[] = {
   "SystemCommodities",
   "PlayerDetails",
   "TransactionResult",
+  "TurnTick",
 };
 
 fn u32 fuelCostForTravel(u32 drive_efficiency, Pos2 current, Pos2 dest) {

@@ -24,10 +24,10 @@
 #define SERVER_PORT 7777
 #define SERVER_MAX_HEAP_MEMORY MB(256)
 #define SERVER_MAX_CLIENTS 16
-#define GAME_THREAD_CONCURRENCY 4
-#define GOAL_NETWORK_SEND_LOOPS_PER_S 4
+#define GAME_THREAD_CONCURRENCY 2
+#define GOAL_NETWORK_SEND_LOOPS_PER_S 8
 #define GOAL_NETWORK_SEND_LOOP_US 1000000/GOAL_NETWORK_SEND_LOOPS_PER_S
-#define GOAL_GAME_LOOPS_PER_S 4
+#define GOAL_GAME_LOOPS_PER_S 24
 #define GOAL_GAME_LOOP_US 1000000/GOAL_GAME_LOOPS_PER_S
 #define CLIENT_TIMEOUT_FRAMES GOAL_GAME_LOOPS_PER_S*3
 #define CHUNK_SIZE 64
@@ -71,8 +71,9 @@ typedef struct Entity {
 } Entity;
 
 typedef struct Account {
+  u8 destination_sys_idx;
+  bool changed;
   u32 id; // the index in the array
-  Pos2 pos;
   String name;
   String pw;
   PlayerShip ship;
@@ -114,6 +115,7 @@ typedef struct ClientList {
 } ClientList;
 
 typedef struct State {
+  bool all_accounts_ready;
   Mutex client_mutex;
   Mutex mutex;
   ClientList clients;
@@ -373,7 +375,7 @@ fn u32 findClientHandleBySocketAddress(ClientList* clients, SocketAddress addres
 
 fn StarSystem* findAccountsSystem(Account* a) {
   for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
-    if (state.map[i].x == a->pos.x && state.map[i].y == a->pos.y) {
+    if (i == a->ship.system_idx) {
       return &state.map[i];
     }
   }
@@ -418,11 +420,13 @@ fn void sendMessageTransactionResult(SocketAddress addr, u32 qty, bool buying, u
   printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
 }
 
-fn void sendMessagePlayerDetails(PlayerShip ship, SocketAddress addr) {
-  UDPMessage outgoing_message = {.address = addr};
+fn UDPMessage makeMessagePlayerDetails(PlayerShip ship) {
+  UDPMessage outgoing_message = {0};
   u32 msg_i = 0;
   outgoing_message.bytes[msg_i++] = (u8)MessagePlayerDetails;
   outgoing_message.bytes[msg_i++] = ship.type;
+  outgoing_message.bytes[msg_i++] = ship.system_idx;
+  outgoing_message.bytes[msg_i++] = ship.ready_to_depart;
   outgoing_message.bytes[msg_i++] = ship.drive_efficiency;
   outgoing_message.bytes[msg_i++] = ship.life_support_efficiency;
   msg_i += writeU16ToBufferLE(outgoing_message.bytes + msg_i, ship.vacuum_cargo_slots);
@@ -439,8 +443,13 @@ fn void sendMessagePlayerDetails(PlayerShip ship, SocketAddress addr) {
   for (u32 i = 0; i < Commodity_Count; i++) {
     msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, ship.commodities[i]);
   }
-
   outgoing_message.bytes_len = msg_i;
+  return outgoing_message;
+}
+
+fn void sendMessagePlayerDetails(PlayerShip ship, SocketAddress addr) {
+  UDPMessage outgoing_message = makeMessagePlayerDetails(ship);
+  outgoing_message.address = addr;
   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
   printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
 }
@@ -496,6 +505,12 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     } break;
     case CommandKeepAlive:
       break;
+    case CommandSetDestination: {
+      parsed.byte = message[1]; // index of system in array
+    } break;
+    case CommandReadyStatus: {
+      parsed.byte = message[1]; // boolean ready_to_depart
+    } break;
     case CommandTransact: {
       printf("command transact received\n");
       parsed.byte = message[1]; // buy?
@@ -557,10 +572,23 @@ fn void* sendNetworkUpdates(void* sock) {
         //  continue; // they are still creating their character
         //}
 
-        // update allthe changed systems
-        for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
-          if (state.map[i].changed == true) {
-            UDPMessage msg_data = makeMessageSystemCommodities(&state.map[i]);
+        // update all the changed systems
+        UDPMessage msg_data;
+        for (u32 ii = 0; ii < STAR_SYSTEM_COUNT; ii++) {
+          if (state.map[ii].changed == true) {
+            msg_data = makeMessageSystemCommodities(&state.map[ii]);
+            u8List msg = {
+              .capacity = UDP_MAX_MESSAGE_LEN,
+              .items = msg_data.bytes,
+              .length = msg_data.bytes_len,
+            };
+            sendUDPu8List(socket, &client.address, &msg);
+          }
+        }
+        // update all the changed accounts
+        for (u32 ii = 0; ii < ACCOUNT_LEN; ii++) {
+          if (state.accounts[ii].changed == true) {
+            msg_data = makeMessagePlayerDetails(state.accounts[ii].ship);
             u8List msg = {
               .capacity = UDP_MAX_MESSAGE_LEN,
               .items = msg_data.bytes,
@@ -572,9 +600,14 @@ fn void* sendNetworkUpdates(void* sock) {
       }
     } unlockMutex(&state.client_mutex);
 
-    for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
-      state.map[i].changed = false;
-    }
+    lockMutex(&state.mutex); {
+      for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+        state.map[i].changed = false;
+      }
+      for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+        state.accounts[i].changed = false;
+      }
+    } unlockMutex(&state.mutex);
 
     u32 loop_duration = osTimeMicrosecondsNow() - loop_start;
     i32 remaining_time = GOAL_NETWORK_SEND_LOOP_US - loop_duration;
@@ -583,6 +616,10 @@ fn void* sendNetworkUpdates(void* sock) {
     }
   }
   return NULL;
+}
+
+fn bool accountIsEmpty(Account* a) {
+  return a->id == 0 && a->name.length == 0;
 }
 
 fn void* gameLoop(void* params) {
@@ -620,6 +657,23 @@ fn void* gameLoop(void* params) {
         u32 client_handle = findClientHandleBySocketAddress(&state.clients, sender);
         Client* client = &state.clients.items[client_handle];
         switch (msg.type) {
+          case CommandSetDestination: {
+            Account* account = &state.accounts[client->account_id];
+            account->destination_sys_idx = msg.byte;
+          } break;
+          case CommandReadyStatus: {
+            Account* account = &state.accounts[client->account_id];
+            account->ship.ready_to_depart = msg.byte;
+            sendMessagePlayerDetails(account->ship, sender);
+            state.all_accounts_ready = true;
+            for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+              if (!accountIsEmpty(&state.accounts[i])) {
+                if (state.accounts[i].ship.ready_to_depart == false) {
+                  state.all_accounts_ready = false;
+                }
+              }
+            }
+          } break;
           case CommandTransact: {
             printf("Transact for client_handle=%d, on #%lld", client_handle, state.frame);
             bool is_buying_from_system = msg.byte;
@@ -629,7 +683,10 @@ fn void* gameLoop(void* params) {
             u32 qty_traded = 0;
             u32 credit_value = 0;
             if (is_buying_from_system) {
-              u32 ship_space = account->ship.vacuum_cargo_slots - usedVacuumCargoSlots(account->ship);
+              u32 ship_space = MAX_u32;
+              if (COMMODITIES[msg.commodity].unit == StorageUnitContainer) {
+                ship_space = account->ship.vacuum_cargo_slots - usedVacuumCargoSlots(account->ship);
+              }
               for (u32 amount_to_buy = Min(msg.qty, total_available); amount_to_buy > 0; amount_to_buy--, total_available--, ship_space--) {
                 u32 price = priceForCommodity(msg.commodity, total_available, false);
                 if (price > account->ship.credits || ship_space == 0) {
@@ -717,7 +774,7 @@ fn void* gameLoop(void* params) {
               }
             } else {
               for (u32 i = 0; i < ACCOUNT_LEN; i++) {
-                if (state.accounts[i].id == 0 && state.accounts[i].name.length == 0) {
+                if (accountIsEmpty(&state.accounts[i])) {
                   existing_account = &state.accounts[i];
                   existing_account->id = i;
                   break;
@@ -772,8 +829,7 @@ fn void* gameLoop(void* params) {
               printf("ship_type=%s, client_handle=%d, acct_id=%d\n", SHIP_TYPE_STRINGS[msg.byte], client_handle, account->id);
               u32 starting_system_idx = rand() % STAR_SYSTEM_COUNT;
               StarSystem starting_system = state.map[starting_system_idx];
-              account->pos.x = starting_system.x;
-              account->pos.y = starting_system.y;
+              account->ship.system_idx = starting_system_idx;
 
               // tell the client their account id
               outgoing_message.address = sender;
@@ -817,21 +873,73 @@ fn void* gameLoop(void* params) {
         msg_iters++;
       }
 
+      if (state.all_accounts_ready) {
+        for (u32 i = 1; i < SERVER_MAX_CLIENTS; i++) {
+          if (state.clients.items[i].last_ping != 0) {
+            outgoing_message.address = state.clients.items[i].address;
+            outgoing_message.bytes_len = 1;
+            outgoing_message.bytes[0] = (u8)MessageTurnTick;
+            outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+          }
+        }
+      }
+
       } unlockMutex(&state.mutex); unlockMutex(&state.client_mutex);
     }
 
     LaneSync();
 
     // 2. tick non-user entities
-    // iterate all the rooms
-    /*
-    Room* room = NULL;
-    Range1u64 room_range = LaneRange(MAX_ROOMS);
-    for (u32 i = room_range.min; i < room_range.max; i++) {
-      room = &state.rooms->items[i];
-      simulateRoom(&scratch_arena, room, burn_tick, regen_hp_tick);
+    if (state.all_accounts_ready) {
+      // tick all the star systems
+      StarSystem* sys = NULL;
+      Range1u64 sys_range = LaneRange(STAR_SYSTEM_COUNT);
+      for (u32 i = sys_range.min; i < sys_range.max; i++) {
+        sys = &state.map[i];
+        sys->changed = true;
+        for (u32 ii = 0; ii < Commodity_Count; ii++) {
+          for (u32 iii = 0; iii < MAX_PLANETS; iii++) {
+            if (sys->planets[iii].type != PlanetTypeNull) {
+              if (sys->planets[iii].commodities[ii] > COMMODITIES[ii].consumption) {
+                sys->planets[iii].commodities[ii] -= COMMODITIES[ii].consumption;
+              } else {
+                sys->planets[iii].commodities[ii] = 0;
+              }
+              sys->planets[iii].commodities[ii] += sys->planets[iii].production[ii];
+            }
+          }
+        }
+      }
+
+      // move all the players
+      u32 player_count = 0;
+      for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+        if (!accountIsEmpty(&state.accounts[i])) {
+          player_count += 1;
+        }
+      }
+      Range1u64 ship_range = LaneRange(player_count);
+      for (u32 i = ship_range.min; i < ship_range.max; i++) {
+        Account* acct = &state.accounts[i];
+        StarSystem dest = state.map[acct->destination_sys_idx];
+        StarSystem current = state.map[acct->ship.system_idx];
+        Pos2 dest_pos = {dest.x, dest.y};
+        Pos2 curr_pos = {current.x, current.y};
+        u32 projected_fuel_cost = fuelCostForTravel(acct->ship.drive_efficiency, curr_pos, dest_pos);
+        bool have_enough_fuel = projected_fuel_cost < acct->ship.commodities[CommodityHydrogenFuel];
+        if (have_enough_fuel) {
+          // remove the fuel they used on the journey
+          acct->ship.commodities[CommodityHydrogenFuel] -= projected_fuel_cost;
+          // set the pos to be the system they had as destination
+          acct->ship.system_idx = acct->destination_sys_idx;
+        }
+        acct->ship.ready_to_depart = false;
+        acct->changed = true;
+      }
+
+      // TODO pay the mortgage payment
     }
-    */
+    state.all_accounts_ready = false;
 
     // 3. scratch cleanup
     arenaClear(&scratch_arena);

@@ -254,6 +254,27 @@ fn void renderStringChunkList(TuiState* tui, StringChunkList* list, u16 x, u16 y
   }
 }
 
+fn void colorizeBox(TuiState* tui, Box box, u8 background, u8 foreground, u8 byte) {
+  for (u32 i = 0; i < box.width; i++) {
+    for (u32 ii = 0; ii < box.height; ii++) {
+      u32 bufpos = XYToPos(box.x+i, box.y+ii, tui->screen_dimensions.width);
+      tui->frame_buffer[bufpos].background = background;
+      tui->frame_buffer[bufpos].foreground = foreground;
+      if (byte) {
+        tui->frame_buffer[bufpos].bytes[0] = byte;
+      }
+    }
+  }
+}
+
+fn void colorizeRange(TuiState* tui, Range1u32 range, u8 background, u8 foreground) {
+  assert(range.max > range.min);
+  for (u32 i = 0; i < (range.max - range.min); i++) {
+    tui->frame_buffer[range.min+i].background = background;
+    tui->frame_buffer[range.min+i].foreground = foreground;
+  }
+}
+
 fn u32 sprintfAnsiMoveCursorTo(ptr output, u16 x, u16 y) {
   return sprintf(output, "\x1b[%d;%df",y,x);
 }
