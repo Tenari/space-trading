@@ -7,7 +7,7 @@
  *  MY_CONSTANT
  * */
 #include <string.h>
-#include <math.h>
+//#include <math.h>
 #include "base/impl.c"
 #include "lib/network.c"
 #include "render.c"
@@ -101,6 +101,7 @@ typedef struct TransactionResult {
 
 typedef struct ParsedServerMessage {
   Message type;
+  u8 byte;
   u16 port;
   u16 port2;
   u32 ip;
@@ -323,51 +324,6 @@ fn void renderPercentBar(TuiState* tui, u16 x, u16 y, u16 width, u8 ansi_color, 
   }
 }
 
-fn void renderSpeechBubble(TuiState* tui, u16 x, u16 y, u16 max_width, String message, SpeechTailDirection dir) {
-  Pixel* buf = tui->frame_buffer;
-  Dim2 screen_dimensions = tui->screen_dimensions;
-  // calculate dimenions
-  u32 height = (message.length / max_width) + 1;
-  u32 width = message.length;
-  if (message.length > max_width) {
-    width = max_width;
-  }
-  if (width < 12) {
-    width = 12; // minimum width
-  }
-
-  // print the upper border
-  renderUtf8CharToBuffer(buf, x, y, "╭", screen_dimensions);
-  for (i32 i = 0; i < width+1; i++) {
-    renderUtf8CharToBuffer(buf, x+1+i, y, "─", screen_dimensions);
-  }
-  renderUtf8CharToBuffer(buf, x+width+1, y, "╮", screen_dimensions);
-
-  // start printing the rows
-  for (u32 i = 0; i < height; i++) {
-    renderUtf8CharToBuffer(buf, x, y+1+i, "│", screen_dimensions);
-    // print the line of text
-    for (u32 j = 0; j < width; j++) {
-      u32 character_index = (i*(width-1))+j;
-      u16 pos = (x+1+j) + (screen_dimensions.width * (y+1+i));
-      if (message.length > character_index) {
-        buf[pos].bytes[0] = message.bytes[character_index];
-      } else {
-        buf[pos].bytes[0] = ' ';
-      }
-    }
-    renderUtf8CharToBuffer(buf, x+1+width, y+1+i, "│", screen_dimensions);
-  }
-
-  // print the bottom box border
-  renderUtf8CharToBuffer(buf, x, y+1+height, "╰", screen_dimensions);
-  for (i32 i = 0; i < width+1; i++) {
-    renderUtf8CharToBuffer(buf, x+1+i, y+1+height, "─", screen_dimensions);
-  }
-  renderUtf8CharToBuffer(buf, x+width+1, y+1+height, "╯", screen_dimensions);
-  // TODO actually print the speech tail
-}
-
 fn void renderStaticAssetToPixelBuffer(TuiState* tui, u8* asset, u32 len, u16 x, u16 y) {
   u16 line = 0;
   u16 x_in_line = 0;
@@ -431,6 +387,9 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     case MessageTurnTick:
     case MessageNewAccountCreated:
     case MessageBadPw: {/*nothing to parse but the type*/} break;
+    case MessageGameOver: {
+      parsed.byte = message[msg_pos++];
+    } break;
     case MessageTransactionResult: {
       parsed.tx_result.buying = message[msg_pos++];
       parsed.tx_result.qty = readU32FromBufferLE(message + msg_pos);
@@ -551,6 +510,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   while (next_net_msg != NULL) {
     msg_iters += 0;
     switch (msg.type) {
+      case MessageGameOver: {
+        state->screen = state->me.id == msg.byte ? ScreenVictory : ScreenDefeat;
+        sprintf(sbuf,"got winner id: %d", msg.byte);
+        addSystemMessage((u8*)sbuf);
+      } break;
       case MessagePayoffResult: {
         state->ship_tab_states = ShipTabStateMain;
       } break;
@@ -732,10 +696,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       u32 principal_borrowed = selected_ship_cost - STARTING_DOWN_PAYMENT;
       f32 mortgage_rate = calcInterestRate(selected_ship_cost, STARTING_DOWN_PAYMENT);
       f32 r = mortgage_rate / 100.0;
-      f32 rm = r / 12.0;
-      u32 n = 12 * 4;
-      u32 payment = principal_borrowed * (rm*pow((1.0+rm),n))/(pow((1+rm),n) - 1);
-      sprintf(sbuf, "Mortgage: $%d @ %f%% = $%d minimum payment per turn", selected_ship_cost - STARTING_DOWN_PAYMENT, mortgage_rate, payment);
+      u32 payment = principal_borrowed * r;
+      sprintf(sbuf, "Mortgage: $%d @ %f%% = $%d interest after first turn", selected_ship_cost - STARTING_DOWN_PAYMENT, mortgage_rate, payment);
       renderStrToBuffer(tui->frame_buffer, 5, ++line, sbuf, screen_dimensions);
       line++;
       // the table
@@ -1359,23 +1321,21 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
     case ScreenVictory: {
       // SIMULATION
       if (user_pressed_esc || input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED) {
-        state->screen = ScreenMainGame;
+          should_quit = true;
       }
       
       // RENDERING
       renderStrToBuffer(tui->frame_buffer, 10, 10, "You WIN!!!", screen_dimensions);
+      renderStrToBuffer(tui->frame_buffer, 5, 11, "You paid off your ships mortgage and are a free trader!", screen_dimensions);
     } break;
     case ScreenDefeat: {
       // SIMULATION
       if (user_pressed_esc || input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED) {
-        state->me.id = 0;
-        state->menu.selected_index = 0;
-        clearServerSentState();
-        state->screen = ScreenCreateCharacter;
+        should_quit = true;
       }
 
       // RENDERING
-      renderStrToBuffer(tui->frame_buffer, 10, 10, "You died...", screen_dimensions);
+      renderStrToBuffer(tui->frame_buffer, 10, 10, "You lose, forever doomed to work for the bank...", screen_dimensions);
       renderStrToBuffer(tui->frame_buffer, 10, 11, "[press ESC to continue]", screen_dimensions);
     } break;
     case Screen_Count:

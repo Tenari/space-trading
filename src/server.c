@@ -59,17 +59,6 @@ typedef struct ParsedClientCommandThreadQueue {
   Cond not_full;
 } ParsedClientCommandThreadQueue;
 
-typedef struct Entity {
-  bool changed;
-  u8 x;
-  u8 y;
-  u8 color;
-  EntityType type;
-  u32 misc;
-  u64 id;
-  u64 features;
-} Entity;
-
 typedef struct Account {
   u8 destination_sys_idx;
   bool changed;
@@ -78,26 +67,6 @@ typedef struct Account {
   String pw;
   PlayerShip ship;
 } Account;
-
-typedef struct EntityList {
-  u64 length; // the currently used length
-  u64 capacity;
-  Entity* items;
-} EntityList;
-
-typedef struct EntityChunk {
-  u64 length; // the currently used # of entities in this chunk
-  u64 capacity; // the "chunk size" / space in this chunk
-  struct EntityChunk* next; // the next chunk
-  Entity* items; // the actual entities
-} EntityChunk;
-
-typedef struct ChunkedEntityList {
-  u64 length; // the current number of entities
-  u64 chunk_size; // the # of entities per chunk
-  u64 chunks; // the # of chunks in this list so far
-  EntityChunk* first; // the first chunk of entities
-} ChunkedEntityList;
 
 typedef struct Client {
   u16 lan_port;
@@ -134,9 +103,7 @@ typedef struct State {
 ///// Global Variables
 global State state = { 0 };
 global Arena permanent_arena = { 0 };
-global const Entity NULL_ENTITY = { 0 };
 global bool debug_mode = false;
-global ChunkedEntityList free_chunks = { 0, CHUNK_SIZE, 0, NULL };
 
 ///// functionImplementations()
 fn ParsedClientCommandThreadQueue* newPCCThreadQueue(Arena* a) {
@@ -182,44 +149,6 @@ fn ParsedClientCommand* pccThreadSafeNonblockingQueuePop(ParsedClientCommandThre
   return result;
 }
 
-fn u64 entitySerialize(Entity current, Account* acct, u64 index, u8 bytes[]) {
-  // send entity header (common to all entity types)
-  index += writeU64ToBufferLE(bytes + index, current.id);
-  index += writeU64ToBufferLE(bytes + index, current.features);
-  bytes[index++] = current.x;
-  bytes[index++] = current.y;
-  bytes[index++] = (u8)current.type;  // EntityType
-
-  //if (CheckFlag(current.features, FeatureRegensHp)) {
-  //  index += writeU16ToBufferLE(bytes + index, current.hp);
-  //  index += writeU16ToBufferLE(bytes + index, current.max_hp);
-  //}
-
-  // send character-specific details (color and name)
-  if (current.type == EntityCharacter) {
-    bytes[index++] = current.color;
-    // send name string
-    index += writeU64ToBufferLE(bytes + index, acct->name.length);
-    for (u32 j = 0; j < acct->name.length; j++) {
-      bytes[index++] = acct->name.bytes[j];
-    }
-  }
-  return index;
-}
-
-fn u64 entityFeaturesFromType(EntityType type) {
-  u64 result = 0;
-  switch (type) {
-    case EntityCharacter: {
-      SetFlag(result, FeatureWalksAround);
-      SetFlag(result, FeatureCanFight);
-    } break;
-    default: {
-    } break;
-  }
-  return result;
-}
-
 fn Account* findAccountByName(String name) {
   for (u32 i = 0; i < ACCOUNT_LEN; i++) {
     if (stringsEq(&state.accounts[i].name, &name)) {
@@ -227,93 +156,6 @@ fn Account* findAccountByName(String name) {
     }
   }
   return NULL;
-}
-
-fn u64 pushEntity(EntityChunk* chunk, Entity e) {
-  assert(chunk->length < chunk->capacity);
-  chunk->items[chunk->length] = e;
-  u64 result = chunk->length;
-  chunk->length += 1;
-  return result;
-}
-
-fn bool isSpaceInChunk(EntityChunk* chunk) {
-  return chunk->length < chunk->capacity;
-}
-
-fn bool allChunksFull(ChunkedEntityList list) {
-  return list.length >= (list.chunk_size * list.chunks);
-}
-
-fn EntityChunk* pushNewChunk(Arena* a, ChunkedEntityList* list) {
-  EntityChunk* new_chunk;
-  if (free_chunks.length > 0) {
-    new_chunk = free_chunks.first;
-    free_chunks.length -= 1;
-    free_chunks.first = new_chunk->next;
-  } else {
-    new_chunk = arenaAlloc(a, sizeof(EntityChunk));
-    // alloc the new chunk of entities
-    new_chunk->length = 0;
-    new_chunk->capacity = list->chunk_size;
-    new_chunk->next = NULL;
-    new_chunk->items = arenaAllocArray(a, Entity, list->chunk_size);
-  }
-  // bookeeping in the list
-  list->chunks += 1;
-  if (list->first == NULL) {
-    list->first = new_chunk;
-  } else {
-    EntityChunk* last = list->first;
-    while (last->next != NULL) {
-      last = last->next;
-    }
-    last->next = new_chunk;
-  }
-  return new_chunk;
-}
-
-fn Entity* entityPtrFromChunkList(ChunkedEntityList* list, i32 index) {
-  Entity* result = (Entity*)&NULL_ENTITY;
-  i32 chunk_index = index / list->chunk_size;
-  EntityChunk* chunk = list->first;
-  for (i32 i = 0; i < chunk_index; i++) {
-    chunk = chunk->next;
-  }
-  result = &chunk->items[index % list->chunk_size];
-  return result;
-}
-
-fn Entity entityFromChunkList(ChunkedEntityList* list, i32 index) {
-  Entity result = {0};
-  i32 chunk_index = index / list->chunk_size;
-  EntityChunk* chunk = list->first;
-  for (i32 i = 0; i < chunk_index; i++) {
-    chunk = chunk->next;
-  }
-  result = chunk->items[index % list->chunk_size];
-  return result;
-}
-
-fn bool deleteLastEntity(ChunkedEntityList* list, EntityChunk* last_chunk, EntityChunk* second_to_last_chunk) {
-  last_chunk->length -= 1;
-  list->length -= 1;
-  // don't delete the room's only chunk, but otherwise move the chunk to the free-list
-  if (last_chunk->length == 0 && last_chunk != list->first) {
-    list->chunks -= 1;
-    second_to_last_chunk->next = NULL;
-    free_chunks.length += 1;
-    EntityChunk* last_free_chunk = free_chunks.first;
-    if (last_free_chunk) {
-      while (last_free_chunk->next != NULL) {
-        last_free_chunk = last_free_chunk->next;
-      }
-      last_free_chunk->next = last_chunk;
-    } else {
-      free_chunks.first = last_chunk;
-    }
-  }
-  return true;
 }
 
 fn void exitWithErrorMessage(ptr msg) {
@@ -515,8 +357,7 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
 
       printf("Logging in player: %s %d %s\n", MESSAGE_STRINGS[parsed.type], name_len, message + 7);
     } break;
-    case CommandKeepAlive:
-      break;
+    case CommandKeepAlive: break;
     case CommandPayMortgage: {
       parsed.id = readU64FromBufferLE(message + msg_idx);
       printf("paying off %lld\n", parsed.id);
@@ -720,8 +561,10 @@ fn void* gameLoop(void* params) {
             u32 qty_traded = 0;
             u32 credit_value = 0;
             if (is_buying_from_system) {
-              u32 ship_space = MAX_u32;
-              if (COMMODITIES[msg.commodity].unit == StorageUnitContainer) {
+              u32 ship_space = account->ship.cu_m_fuel - account->ship.commodities[CommodityHydrogenFuel];
+              if (msg.commodity == CommodityOxygen) {
+                ship_space = account->ship.cu_m_o2 - account->ship.commodities[CommodityOxygen];
+              } else if (COMMODITIES[msg.commodity].unit == StorageUnitContainer) {
                 ship_space = account->ship.vacuum_cargo_slots - usedVacuumCargoSlots(account->ship);
               }
               for (u32 amount_to_buy = Min(msg.qty, total_available); amount_to_buy > 0; amount_to_buy--, total_available--, ship_space--) {
@@ -858,12 +701,12 @@ fn void* gameLoop(void* params) {
                 .remaining_mortgage = template.base_cost - STARTING_DOWN_PAYMENT,
                 .interest_rate = calcInterestRate(template.base_cost, STARTING_DOWN_PAYMENT),
                 .credits = 10000.0,
-                //.cu_m_fuel; // we are just saying you can buy as much fuel as you want
-                //.cu_m_o2; // we are just saying you can buy as much o2 as you want
+                .cu_m_fuel = template.cu_m_fuel,
+                .cu_m_o2 = template.cu_m_o2,
                 .id = account->id,
               };
-              player_ship.commodities[CommodityHydrogenFuel] = 2000;
-              player_ship.commodities[CommodityOxygen] = 1000;
+              player_ship.commodities[CommodityHydrogenFuel] = player_ship.cu_m_fuel;
+              player_ship.commodities[CommodityOxygen] = player_ship.cu_m_o2;
               account->ship = player_ship;
               printf("ship_type=%s, client_handle=%d, acct_id=%d\n", SHIP_TYPE_STRINGS[msg.byte], client_handle, account->id);
               u32 starting_system_idx = rand() % STAR_SYSTEM_COUNT;
@@ -933,10 +776,13 @@ fn void* gameLoop(void* params) {
             outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
           }
         }
-        return NULL;
       }
 
       } unlockMutex(&state.mutex); unlockMutex(&state.client_mutex);
+    }
+
+    if (state.someone_won) {
+      return NULL;
     }
 
     LaneSync();
@@ -990,20 +836,28 @@ fn void* gameLoop(void* params) {
         acct->ship.ready_to_depart = false;
         acct->changed = true;
 
-        // look for a winner + increase the mortgage from interest
+        // increase the mortgage from interest
         if (!shipIsNull(&acct->ship)) {
-          if (acct->ship.remaining_mortgage == 0) {
-            state.winner_id = acct->id;
-            state.someone_won = true;
-            printf("someone WON!!! %d\n", i);
-            break;
-          } else {
+          if (acct->ship.remaining_mortgage > 0) {
             acct->ship.remaining_mortgage += acct->ship.remaining_mortgage * (acct->ship.interest_rate / 100.0);
           }
         }
       }
+    }
 
-      // TODO pay the mortgage payment
+    // look for a winner
+    Range1u64 ship_range = LaneRange(player_count);
+    for (u32 i = ship_range.min; i < ship_range.max; i++) {
+      Account* acct = &state.accounts[i];
+      if (!shipIsNull(&acct->ship)) {
+        if (acct->ship.remaining_mortgage == 0) {
+          state.winner_id = acct->id;
+          state.someone_won = true;
+          printf("someone WON!!! %d\n", i);
+          acct->changed = true;
+          break;
+        }
+      }
     }
 
     // 3. scratch cleanup
@@ -1208,6 +1062,9 @@ i32 main(i32 argc, ptr argv[]) {
   for (u32 i = 0; i < GAME_THREAD_CONCURRENCY; i++) {
     osThreadJoin(game_threads[i], MAX_u64);
   }
+
+  osThreadJoin(recv_thread, MAX_u64);
+  osThreadJoin(send_thread, MAX_u64);
 
   return 0;
 }

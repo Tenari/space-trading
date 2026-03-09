@@ -6,7 +6,7 @@
 
 ///// #define some game-tunable constants
 #define STARTING_DOWN_PAYMENT (10000)
-#define SHIP_DETAIL_COUNT (8)
+#define SHIP_DETAIL_COUNT (7)
 #define STAR_SYSTEM_COUNT (40)
 #define MAP_WIDTH (36)
 #define MAP_HEIGHT (12)
@@ -34,14 +34,14 @@ typedef enum ShipType {
   ShipSparrow,
   ShipDart,
   ShipHaulerPrimeZ1,
-  ShipNX400,
+//  ShipNX400,
   ShipType_Count,
 } ShipType;
 global str SHIP_TYPE_STRINGS[] = {
   "Sparrow",
   "Dart",
   "Hauler-Prime Z-1",
-  "NX-400",
+//  "NX-400",
 };
 
 typedef struct ShipTemplate {
@@ -54,33 +54,39 @@ typedef struct ShipTemplate {
   u16 passenger_amenities_flags;
   u16 smugglers_hold_cu_m;
   u32 base_cost;
+  u32 cu_m_fuel;
+  u32 cu_m_o2;
 } ShipTemplate;
 
 global ShipTemplate SHIPS[] = {
   {
-    .type = ShipSparrow, .drive_efficiency = 1, .life_support_efficiency = 2,
+    .type = ShipSparrow, .drive_efficiency = 10, .life_support_efficiency = 2,
     .vacuum_cargo_slots = 5, .climate_cargo_slots = 0, .passenger_berths = 0,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 1, .base_cost = 100000,
+    .cu_m_fuel = 2000, .cu_m_o2 = 1000,
   },
   {
-    .type = ShipDart,    .drive_efficiency = 12, .life_support_efficiency = 4,
-    .vacuum_cargo_slots = 9, .climate_cargo_slots = 1, .passenger_berths = 1,
+    .type = ShipDart,    .drive_efficiency = 70, .life_support_efficiency = 4,
+    .vacuum_cargo_slots = 10, .climate_cargo_slots = 1, .passenger_berths = 1,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 150000,
+    .cu_m_fuel = 2000, .cu_m_o2 = 1000,
   },
   {
-    .type = ShipHaulerPrimeZ1, .drive_efficiency = 3, .life_support_efficiency = 3,
-    .vacuum_cargo_slots = 25, .climate_cargo_slots = 5, .passenger_berths = 0,
+    .type = ShipHaulerPrimeZ1, .drive_efficiency = 50, .life_support_efficiency = 3,
+    .vacuum_cargo_slots = 100, .climate_cargo_slots = 5, .passenger_berths = 0,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 250000,
+    .cu_m_fuel = 2000, .cu_m_o2 = 1000,
   },
-  {
+/*  {
     .type = ShipNX400, .drive_efficiency = 6, .life_support_efficiency = 8,
     .vacuum_cargo_slots = 5, .climate_cargo_slots = 5, .passenger_berths = 5,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 350000,
-  },
+    .cu_m_fuel = 2000, .cu_m_o2 = 1000,
+  },*/
 };
 
 fn f32 calcInterestRate(u32 cost, u32 down_payment) {
@@ -93,10 +99,10 @@ global FieldDescriptor SHIP_FIELDS[SHIP_DETAIL_COUNT] = {
   { "Cost", FieldTypeU32, offsetof(ShipTemplate, base_cost), 8 },
   { "DriveEff", FieldTypeU8, offsetof(ShipTemplate, drive_efficiency), 8 },
   { "LifeSupp", FieldTypeU8, offsetof(ShipTemplate, life_support_efficiency), 8 },
-  { "V.Cargo", FieldTypeU16, offsetof(ShipTemplate, vacuum_cargo_slots), 7 },
-  { "C.Cargo", FieldTypeU16, offsetof(ShipTemplate, climate_cargo_slots), 7 },
-  { "Passengers", FieldTypeU16, offsetof(ShipTemplate, passenger_berths), 10 },
-  { "SmugglersHold", FieldTypeU16, offsetof(ShipTemplate, smugglers_hold_cu_m), 13 },
+  { "Cargo", FieldTypeU16, offsetof(ShipTemplate, vacuum_cargo_slots), 7 },
+  { "FuelTank", FieldTypeU32, offsetof(ShipTemplate, cu_m_fuel), 8 },
+  { "O2 Tank", FieldTypeU32, offsetof(ShipTemplate, cu_m_o2), 8 },
+//  { "SmugglersHold", FieldTypeU16, offsetof(ShipTemplate, smugglers_hold_cu_m), 13 },
 };
 
 typedef enum EquipmentType {
