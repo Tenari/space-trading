@@ -37,6 +37,13 @@ typedef enum Tab {
   Tab_Count,
 } Tab;
 
+typedef enum ShipTabStates {
+  ShipTabStateMain,
+  ShipTabStatePayoffModal,
+  ShipTabStateLoading,
+  ShipTabStates_Count,
+} ShipTabStates;
+
 typedef enum StationTabStates {
   StationTabStateTable,
   StationTabStateTransact,
@@ -154,6 +161,7 @@ typedef struct GameState {
   Pos2 pos;
   u8 destination_sys_idx;
   StationTabStates station_tab_state;
+  ShipTabStates ship_tab_states;
   TransactionResult tx_result;
   u64 turn_tick_started_on;
 } GameState;
@@ -384,6 +392,33 @@ fn void clearServerSentState() {
   state.entities.items = arenaAllocArray(&state.entity_arena, Entity, state.entities.capacity);
 }
 
+fn void resetTabRow(Tab tab) {
+  if (state.menu.selected_index == TabStation) {
+    state.row.len = Commodity_Count;
+    state.row.selected_index = 0;
+  } else if (state.menu.selected_index == TabShip) {
+    state.ship_tab_states = ShipTabStateMain;
+    state.row.len = 2;
+    state.row.selected_index = 0;
+  }
+}
+
+fn void moveRowUpDown(bool user_pressed_up, bool user_pressed_down) {
+  if (user_pressed_up) {
+    if (state.row.selected_index == 0) {
+      state.row.selected_index = state.row.len - 1;
+    } else {
+      state.row.selected_index -= 1;
+    }
+  } else if (user_pressed_down) {
+    if (state.row.selected_index == state.row.len - 1) {
+      state.row.selected_index = 0;
+    } else {
+      state.row.selected_index += 1;
+    }
+  }
+}
+
 fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 socket) {
   u64 msg_pos = 0;
   Message msg_type = message[msg_pos++];
@@ -392,6 +427,7 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
   ParsedServerMessage parsed = {0};
   parsed.type = msg_type;
   switch (msg_type) {
+    case MessagePayoffResult:
     case MessageTurnTick:
     case MessageNewAccountCreated:
     case MessageBadPw: {/*nothing to parse but the type*/} break;
@@ -515,6 +551,9 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   while (next_net_msg != NULL) {
     msg_iters += 0;
     switch (msg.type) {
+      case MessagePayoffResult: {
+        state->ship_tab_states = ShipTabStateMain;
+      } break;
       case MessageTurnTick: {
         state->screen = ScreenTurnTick;
         state->turn_tick_started_on = loop_count;
@@ -712,20 +751,14 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         if (state->menu.selected_index >= state->menu.len) {
           state->menu.selected_index = 0;
         }
-        if (state->menu.selected_index == TabStation) {
-          state->row.len = Commodity_Count;
-          state->row.selected_index = 0;
-        }
+        resetTabRow(state->menu.selected_index);
       } else if (user_pressed_shift_tab) {
         if (state->menu.selected_index > 0) {
           state->menu.selected_index -= 1;
         } else {
           state->menu.selected_index = state->menu.len - 1;
         }
-        if (state->menu.selected_index == TabStation) {
-          state->row.len = Commodity_Count;
-          state->row.selected_index = 0;
-        }
+        resetTabRow(state->menu.selected_index);
       }
       Tab tab = state->menu.selected_index;
 
@@ -785,6 +818,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           u32 x_off = box.x+((box.width - MAP_WIDTH*xw)/2);
           u32 y_off = box.y+1;
           StarSystem dest = state->map[state->destination_sys_idx];
+          tui->cursor.x = x_off+state->pos.x*xw;
+          tui->cursor.y = y_off+state->pos.y*yh;
           for (u32 i = 0; i < MAP_WIDTH*xw; i++) {
             for (u32 ii = 0; ii < MAP_HEIGHT*yh; ii++) {
               u32 sysx = i / xw;
@@ -906,6 +941,9 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           if (input_buffer[0] == 'q' || user_pressed_esc) {
             should_quit = true;
           }
+
+          moveRowUpDown(user_pressed_up, user_pressed_down);
+
           u32 yoff = box.y+1;
           MemoryZero(sbuf, SBUFLEN);
           sprintf(sbuf, "Player: %s", state->login_state.name.bytes);
@@ -913,6 +951,26 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 
           MemoryZero(sbuf, SBUFLEN);
           sprintf(sbuf, "Ship Type: %s", SHIP_TYPE_STRINGS[state->me.type]);
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "Remaining Mortgage: %d @ %.2f%%", state->me.remaining_mortgage, state->me.interest_rate);
+          if (state->row.selected_index == 0) {
+            Range1u32 range = {
+              .min = XYToPos(box.x+2, yoff, screen_dimensions.width),
+              .max = XYToPos(box.x+2+strlen(sbuf), yoff, screen_dimensions.width),
+            };
+            tui->cursor.x = box.x+2;
+            tui->cursor.y = yoff;
+            colorizeRange(tui, range, ANSI_WHITE, ANSI_BLACK);
+            renderStrToBuffer(tui->frame_buffer, box.x+2+strlen(sbuf), yoff, " [ENTER] to pay off", screen_dimensions);
+
+            if (user_pressed_enter && state->ship_tab_states == ShipTabStateMain) {
+              // open the payoff modal
+              state->ship_tab_states = ShipTabStatePayoffModal;
+              user_pressed_enter = false; // to prevent immediately submitting the modal
+            }
+          }
           renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
 
           MemoryZero(sbuf, SBUFLEN);
@@ -926,33 +984,102 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 
           MemoryZero(sbuf, SBUFLEN);
           sprintf(sbuf, "Ready To Depart: %s", state->me.ready_to_depart ? "yes" : "no");
-          Range1u32 range = {
-            .min = XYToPos(box.x+2, yoff, screen_dimensions.width),
-            .max = XYToPos(box.x+2+strlen(sbuf), yoff, screen_dimensions.width),
-          };
-          tui->cursor.x = box.x+2;
-          tui->cursor.y = yoff;
-          colorizeRange(tui, range, ANSI_WHITE, ANSI_BLACK);
-          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+          if (state->row.selected_index == 1) {
+            Range1u32 range = {
+              .min = XYToPos(box.x+2, yoff, screen_dimensions.width),
+              .max = XYToPos(box.x+2+strlen(sbuf), yoff, screen_dimensions.width),
+            };
+            tui->cursor.x = box.x+2;
+            tui->cursor.y = yoff;
+            colorizeRange(tui, range, ANSI_WHITE, ANSI_BLACK);
 
-          if (user_pressed_enter) {
-            // send the "ready" or "not ready" message to the server
-            u32 msg_idx = 0;
-            UDPMessage msg = {0};
-            msg.address = udp->server_address;
-            // 1. msg type/CommandType
-            msg.bytes[msg_idx++] = CommandReadyStatus;
-            // 2. buy?
-            msg.bytes[msg_idx++] = !state->me.ready_to_depart;
-            msg.bytes_len = msg_idx;
+            renderStrToBuffer(tui->frame_buffer, box.x+2+strlen(sbuf), yoff, " [ENTER] to toggle", screen_dimensions);
 
-            outgoingMessageQueuePush(network_send_queue, &msg);
+            if (user_pressed_enter && state->ship_tab_states == ShipTabStateMain) {
+              // send the "ready" or "not ready" message to the server
+              u32 msg_idx = 0;
+              UDPMessage msg = {0};
+              msg.address = udp->server_address;
+              // 1. msg type/CommandType
+              msg.bytes[msg_idx++] = CommandReadyStatus;
+              // 2. buy?
+              msg.bytes[msg_idx++] = !state->me.ready_to_depart;
+              msg.bytes_len = msg_idx;
+
+              outgoingMessageQueuePush(network_send_queue, &msg);
+            }
           }
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
 
           for (u32 i = 0; i < Commodity_Count; i++) {
             MemoryZero(sbuf, SBUFLEN);
             sprintf(sbuf, "%-42s %d", COMMODITIES[i].name, state->me.commodities[i]);
             renderStrToBuffer(tui->frame_buffer, box.x+4, yoff+4+i, sbuf, screen_dimensions);
+          }
+
+          Box modal_outline = {
+            .x = (tui->screen_dimensions.width - 50) / 2,
+            .y = (tui->screen_dimensions.height - 15) / 2,
+            .height = 15,
+            .width = 50,
+          };
+          u32 y_off = modal_outline.y+2;
+          if (state->ship_tab_states == ShipTabStatePayoffModal) {
+            if (user_pressed_a_number) {
+              String next_char = { 1, 2, (char*)input_buffer };
+              stringChunkListAppend(&state->string_arena, &state->message_input, next_char);
+            } else if (user_pressed_backspace) {
+              stringChunkListDeleteLast(&state->string_arena, &state->message_input);
+            }
+
+            // draw the modal
+            clearBox(tui, modal_outline);
+            drawAnsiBox(tui->frame_buffer, modal_outline, tui->screen_dimensions, false);
+
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "How much would you like to pay?");
+            renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
+
+            renderStringChunkList(tui, &state->message_input, modal_outline.x+8, y_off);
+            tui->cursor.x = modal_outline.x + 8 + state->message_input.total_size;
+            tui->cursor.y = y_off++;
+
+            String input_q_str = stringChunkToString(&permanent_arena, state->message_input);
+            u32 input_quantity = atoi(input_q_str.bytes);
+            u32 remaining = input_quantity > state->me.remaining_mortgage ? 0 : (state->me.remaining_mortgage - input_quantity);
+            arenaDealloc(&permanent_arena, input_q_str.capacity);
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "Leaving $%d remaining to pay off", remaining);
+            renderStrToBuffer(tui->frame_buffer, modal_outline.x+8, y_off++, sbuf, screen_dimensions);
+
+            u32 exit_x = modal_outline.x+((modal_outline.width-3)/2);
+            u32 pos = XYToPos(exit_x, y_off, tui->screen_dimensions.width);
+            for (u32 i = 0; i < 3; i++) {
+              tui->frame_buffer[pos+i].background = ANSI_WHITE;
+              tui->frame_buffer[pos+i].foreground = ANSI_BLACK;
+            }
+            renderStrToBuffer(tui->frame_buffer, exit_x, y_off++, "PAY", screen_dimensions);
+
+            if (user_pressed_enter) {
+              // send the "payoff" message to server
+              u32 msg_idx = 0;
+              UDPMessage msg = {0};
+              msg.address = udp->server_address;
+              // 1. msg type/CommandType
+              msg.bytes[msg_idx++] = CommandPayMortgage;
+              // 2. buy?
+              msg_idx += writeU64ToBufferLE(msg.bytes + msg_idx, input_quantity);
+              msg.bytes_len = msg_idx;
+
+              outgoingMessageQueuePush(network_send_queue, &msg);
+
+              state->ship_tab_states = ShipTabStateLoading;
+            }
+          } else if (state->ship_tab_states == ShipTabStateLoading) {
+            // draw the modal
+            clearBox(tui, modal_outline);
+            drawAnsiBox(tui->frame_buffer, modal_outline, tui->screen_dimensions, false);
+            renderStrToBuffer(tui->frame_buffer, modal_outline.x+2, y_off, "Loading...", screen_dimensions);
           }
         } break;
         case TabStation: {
@@ -973,19 +1100,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               case StationTabStates_Count: assert(false && "something has gone horribly wrong");
             }
           }
-          if (user_pressed_up) {
-            if (state->row.selected_index == 0) {
-              state->row.selected_index = state->row.len - 1;
-            } else {
-              state->row.selected_index -= 1;
-            }
-          } else if (user_pressed_down) {
-            if (state->row.selected_index == state->row.len - 1) {
-              state->row.selected_index = 0;
-            } else {
-              state->row.selected_index += 1;
-            }
-          }
+          moveRowUpDown(user_pressed_up, user_pressed_down);
+
           renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "Welcome to ", screen_dimensions);
           renderStrToBuffer(tui->frame_buffer, box.x+2+11, box.y+1, curr.name, screen_dimensions);
 

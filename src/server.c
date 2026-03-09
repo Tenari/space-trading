@@ -116,6 +116,8 @@ typedef struct ClientList {
 
 typedef struct State {
   bool all_accounts_ready;
+  u8 winner_id;
+  bool someone_won;
   Mutex client_mutex;
   Mutex mutex;
   ClientList clients;
@@ -447,6 +449,16 @@ fn UDPMessage makeMessagePlayerDetails(PlayerShip ship) {
   return outgoing_message;
 }
 
+fn void sendMessagePayoffResult(SocketAddress addr) {
+  UDPMessage outgoing_message = {0};
+  outgoing_message.address = addr;
+  u32 msg_i = 0;
+  outgoing_message.bytes[msg_i++] = (u8)MessagePayoffResult;
+  outgoing_message.bytes_len = msg_i;
+  outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+  printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+}
+
 fn void sendMessagePlayerDetails(PlayerShip ship, SocketAddress addr) {
   UDPMessage outgoing_message = makeMessagePlayerDetails(ship);
   outgoing_message.address = addr;
@@ -505,6 +517,10 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     } break;
     case CommandKeepAlive:
       break;
+    case CommandPayMortgage: {
+      parsed.id = readU64FromBufferLE(message + msg_idx);
+      printf("paying off %lld\n", parsed.id);
+    } break;
     case CommandSetDestination: {
       parsed.byte = message[1]; // index of system in array
     } break;
@@ -622,6 +638,10 @@ fn bool accountIsEmpty(Account* a) {
   return a->id == 0 && a->name.length == 0;
 }
 
+fn bool shipIsNull(PlayerShip* ship) {
+  return ship->id == 0 && ship->base_cost == 0;
+}
+
 fn void* gameLoop(void* params) {
   LaneCtx* lane_ctx = (LaneCtx*)params;
   ThreadContext tctx = {
@@ -642,6 +662,10 @@ fn void* gameLoop(void* params) {
     if (LaneIdx() == 0) { // narrow
       state.frame += 1;
 
+      if (state.all_accounts_ready) {
+        state.all_accounts_ready = false;
+      }
+
       // 1. process client messages
       lockMutex(&state.client_mutex); lockMutex(&state.mutex); {
 
@@ -657,6 +681,19 @@ fn void* gameLoop(void* params) {
         u32 client_handle = findClientHandleBySocketAddress(&state.clients, sender);
         Client* client = &state.clients.items[client_handle];
         switch (msg.type) {
+          case CommandPayMortgage: {
+            Account* account = &state.accounts[client->account_id];
+            f32 amount_to_pay = (f32)msg.id;
+            if (account->ship.credits >= amount_to_pay) {
+              account->ship.credits -= amount_to_pay;
+              account->ship.remaining_mortgage -= msg.id;
+            } else {
+              account->ship.remaining_mortgage -= (u32)account->ship.credits;
+              account->ship.credits = 0.0;
+            }
+            account->changed = true;
+            sendMessagePayoffResult(sender);
+          } break;
           case CommandSetDestination: {
             Account* account = &state.accounts[client->account_id];
             account->destination_sys_idx = msg.byte;
@@ -780,11 +817,12 @@ fn void* gameLoop(void* params) {
                   break;
                 }
               }
+              printf("new account id=%d\n", existing_account->id);
               existing_account->name = name;
               existing_account->pw = pw;
             }
             client->account_id = existing_account->id;
-            if (existing_account->ship.id != 0) {
+            if (!shipIsNull(&existing_account->ship)) {
               // tell the client their account id
               outgoing_message.bytes[0] = (u8)MessageCharacterId;
               writeU64ToBufferLE(outgoing_message.bytes + 1, existing_account->ship.id);
@@ -804,7 +842,8 @@ fn void* gameLoop(void* params) {
           } break;
           case CommandCreateCharacter: {
             Account* account = &state.accounts[client->account_id];
-            if (account->ship.id == 0) {
+            printf("creating character for account id=%d, %s\n", account->id, SHIP_TYPE_STRINGS[msg.byte]);
+            if (shipIsNull(&account->ship)) {
               ShipTemplate template = SHIPS[msg.byte];
               PlayerShip player_ship = {
                 .type = msg.byte,
@@ -821,7 +860,7 @@ fn void* gameLoop(void* params) {
                 .credits = 10000.0,
                 //.cu_m_fuel; // we are just saying you can buy as much fuel as you want
                 //.cu_m_o2; // we are just saying you can buy as much o2 as you want
-                .id = ++state.next_eid, // start from 1
+                .id = account->id,
               };
               player_ship.commodities[CommodityHydrogenFuel] = 2000;
               player_ship.commodities[CommodityOxygen] = 1000;
@@ -884,10 +923,30 @@ fn void* gameLoop(void* params) {
         }
       }
 
+      if (state.someone_won) {
+        for (u32 i = 1; i < SERVER_MAX_CLIENTS; i++) {
+          if (state.clients.items[i].last_ping != 0) {
+            outgoing_message.address = state.clients.items[i].address;
+            outgoing_message.bytes_len = 2;
+            outgoing_message.bytes[0] = (u8)MessageGameOver;
+            outgoing_message.bytes[1] = state.winner_id;
+            outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+          }
+        }
+        return NULL;
+      }
+
       } unlockMutex(&state.mutex); unlockMutex(&state.client_mutex);
     }
 
     LaneSync();
+
+    u32 player_count = 0;
+    for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+      if (!accountIsEmpty(&state.accounts[i])) {
+        player_count += 1;
+      }
+    }
 
     // 2. tick non-user entities
     if (state.all_accounts_ready) {
@@ -911,16 +970,11 @@ fn void* gameLoop(void* params) {
         }
       }
 
-      // move all the players
-      u32 player_count = 0;
-      for (u32 i = 0; i < ACCOUNT_LEN; i++) {
-        if (!accountIsEmpty(&state.accounts[i])) {
-          player_count += 1;
-        }
-      }
       Range1u64 ship_range = LaneRange(player_count);
       for (u32 i = ship_range.min; i < ship_range.max; i++) {
         Account* acct = &state.accounts[i];
+
+        // move all the players
         StarSystem dest = state.map[acct->destination_sys_idx];
         StarSystem current = state.map[acct->ship.system_idx];
         Pos2 dest_pos = {dest.x, dest.y};
@@ -935,11 +989,22 @@ fn void* gameLoop(void* params) {
         }
         acct->ship.ready_to_depart = false;
         acct->changed = true;
+
+        // look for a winner + increase the mortgage from interest
+        if (!shipIsNull(&acct->ship)) {
+          if (acct->ship.remaining_mortgage == 0) {
+            state.winner_id = acct->id;
+            state.someone_won = true;
+            printf("someone WON!!! %d\n", i);
+            break;
+          } else {
+            acct->ship.remaining_mortgage += acct->ship.remaining_mortgage * (acct->ship.interest_rate / 100.0);
+          }
+        }
       }
 
       // TODO pay the mortgage payment
     }
-    state.all_accounts_ready = false;
 
     // 3. scratch cleanup
     arenaClear(&scratch_arena);

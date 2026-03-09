@@ -569,6 +569,8 @@ fn void renderTable(TuiState* tui, TableDrawInfo t, u32 selected_index, FieldDes
     // render the columns
     for (u32 ii = 0; ii < t.cols; col_x_pos += fields[ii].width+table_col_pad, ii++) {
       if (i == selected_index) {
+        tui->cursor.x = t.x_offset;
+        tui->cursor.y = t.y_offset;
         for (u32 iii = 0; iii < fields[ii].width+table_col_pad; iii++) {
           u32 pos = XYToPos(t.x_offset+col_x_pos+iii, t.y_offset, tui->screen_dimensions.width);
           tui->frame_buffer[pos].background = ANSI_WHITE;

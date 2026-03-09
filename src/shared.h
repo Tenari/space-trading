@@ -8,8 +8,8 @@
 #define STARTING_DOWN_PAYMENT (10000)
 #define SHIP_DETAIL_COUNT (8)
 #define STAR_SYSTEM_COUNT (40)
-#define MAP_WIDTH (40)
-#define MAP_HEIGHT (10)
+#define MAP_WIDTH (36)
+#define MAP_HEIGHT (12)
 #define MAX_PLANETS (3)
 
 typedef enum EntityFeature {
@@ -437,6 +437,7 @@ typedef enum CommandType {
   CommandTransact,
   CommandReadyStatus,
   CommandSetDestination,
+  CommandPayMortgage,
   CommandType_Count,
 } CommandType;
 
@@ -447,6 +448,7 @@ static const char* command_type_strings[CommandType_Count] = {
   "CreateCharacter",
   "ReadyStatus",
   "SetDestination",
+  "PayMortgage",
 };
 
 #define ENTITY_HEADER_MESSAGE_SIZE (8+8+1+1+1)
@@ -461,6 +463,8 @@ typedef enum Message {
   MessagePlayerDetails,
   MessageTransactionResult,
   MessageTurnTick,
+  MessageGameOver,
+  MessagePayoffResult,
   Message_Count,
 } Message;
 
@@ -474,6 +478,8 @@ static const char* MESSAGE_STRINGS[] = {
   "PlayerDetails",
   "TransactionResult",
   "TurnTick",
+  "GameOver",
+  "PayoffResult",
 };
 
 fn u32 fuelCostForTravel(u32 drive_efficiency, Pos2 current, Pos2 dest) {
