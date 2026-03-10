@@ -433,6 +433,7 @@ union Range1f32
 #  include <ws2tcpip.h>
 #  include <timeapi.h>
 #  include <conio.h>
+#  include <pthread.h>
   typedef struct {
 	  DWORD input_mode;
 	  DWORD output_mode;

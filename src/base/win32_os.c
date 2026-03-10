@@ -1,5 +1,4 @@
 #include "string.h"
-#include "os.h"
 #include <userenv.h>
 #include <stdio.h>
 
@@ -313,6 +312,7 @@ i32 osLanIPAddress() {
 }
 
 bool osThreadJoin(Thread handle, u64 endt_us) {
+/*
   DWORD sleep_ms = os_w32_sleep_ms_from_endt_us(endt_us);
   OS_W32_Entity *entity = (OS_W32_Entity *)PtrFromInt(handle.u64[0]);
   DWORD wait_result = WAIT_OBJECT_0;
@@ -323,4 +323,9 @@ bool osThreadJoin(Thread handle, u64 endt_us) {
     os_w32_entity_release(entity);
   }
   return (wait_result == WAIT_OBJECT_0);
+	*/
+	return true;
 }
+
+ fn void osBarrierWait(Barrier barrier) {
+ }
