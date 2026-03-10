@@ -465,6 +465,9 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         state->ship_tab_states = ShipTabStateMain;
       } break;
       case MessageTurnTick: {
+        MemoryZero(sbuf, SBUFLEN);
+        sprintf(sbuf,"got TurnTick message from server %lld", loop_count);
+        addSystemMessage((u8*)sbuf);
         state->screen = ScreenTurnTick;
         state->turn_tick_started_on = loop_count;
       } break;
@@ -473,6 +476,9 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         MemoryCopyStruct(&state->tx_result, &msg.tx_result);
       } break;
       case MessagePlayerDetails: {
+        MemoryZero(sbuf, SBUFLEN);
+        sprintf(sbuf,"got player details for: %lld (%s us)", msg.ship.id, msg.ship.id == state->me.id ? "it's" : "not");
+        addSystemMessage((u8*)sbuf);
         if (msg.ship.id == state->me.id) {
           state->me.type = msg.ship.type;
           state->me.system_idx = msg.ship.system_idx;
@@ -495,6 +501,9 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         }
       } break;
       case MessageStarPositions: {
+        MemoryZero(sbuf, SBUFLEN);
+        sprintf(sbuf,"got StarPositions message from server");
+        addSystemMessage((u8*)sbuf);
         for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
           state->map[i].name = STAR_NAMES[i];
           state->map[i].x = msg.positions[i].x;
@@ -521,11 +530,12 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       } break;
       case MessageCharacterId: {
         state->me.id = msg.id;
-        char bytes[256] = {0};
-        sprintf(bytes,"got character id: %lld", msg.id);
-        addSystemMessage((u8*)bytes);
+        MemoryZero(sbuf, SBUFLEN);
+        sprintf(sbuf,"got character id: %lld", msg.id);
+        addSystemMessage((u8*)sbuf);
         state->screen = ScreenMainGame;
-        state->menu.selected_index = 0;
+        state->menu.selected_index = TabMap;
+        state->menu.len = Tab_Count;
         state->row.selected_index = 0;
       } break;
       case Message_Count:
@@ -572,7 +582,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       //// SIMULATION
       if (state->me.id != 0) {
         state->screen = ScreenMainGame;
-        state->menu.selected_index = 0;
+        state->menu.selected_index = TabMap;
         state->menu.len = Tab_Count;
         break;
       }
@@ -846,11 +856,12 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
         } break;
         case TabShip: {
-          if (input_buffer[0] == 'q' || user_pressed_esc) {
-            should_quit = true;
+          if (state->ship_tab_states == ShipTabStateMain) {
+            if (input_buffer[0] == 'q' || user_pressed_esc) {
+              should_quit = true;
+            }
+            moveRowUpDown(user_pressed_up, user_pressed_down);
           }
-
-          moveRowUpDown(user_pressed_up, user_pressed_down);
 
           u32 yoff = box.y+1;
           MemoryZero(sbuf, SBUFLEN);
@@ -933,6 +944,9 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           };
           u32 y_off = modal_outline.y+2;
           if (state->ship_tab_states == ShipTabStatePayoffModal) {
+            if (input_buffer[0] == 'q' || user_pressed_esc) {
+              state->ship_tab_states = ShipTabStateMain;
+            }
             if (user_pressed_a_number) {
               String next_char = { 1, 2, (char*)input_buffer };
               stringChunkListAppend(&state->string_arena, &state->message_input, next_char);

@@ -300,6 +300,24 @@ fn void sendMessagePayoffResult(SocketAddress addr) {
   printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
 }
 
+fn void sendMessageStarPositions(SocketAddress addr) {
+  UDPMessage outgoing_message = {0};
+  outgoing_message.address = addr;
+  // tell the client about the map
+  u32 star_msg_size = 2+MAX_PLANETS;
+  outgoing_message.bytes_len = 1+(star_msg_size*STAR_SYSTEM_COUNT);
+  outgoing_message.bytes[0] = (u8)MessageStarPositions;
+  for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+    outgoing_message.bytes[1+(i*star_msg_size)] = (u8)state.map[i].x;
+    outgoing_message.bytes[2+(i*star_msg_size)] = (u8)state.map[i].y;
+    for (u32 ii = 0; ii < MAX_PLANETS; ii++) {
+      outgoing_message.bytes[3+ii+(i*star_msg_size)] = state.map[i].planets[ii].type;
+    }
+  }
+  outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+  printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+}
+
 fn void sendMessagePlayerDetails(PlayerShip ship, SocketAddress addr) {
   UDPMessage outgoing_message = makeMessagePlayerDetails(ship);
   outgoing_message.address = addr;
@@ -643,6 +661,8 @@ fn void* gameLoop(void* params) {
               arenaDealloc(&permanent_arena, name.capacity);
               if (pw_matches) {
                 printf(" pw matched\n");
+                existing_account->changed = true;
+                sendMessageStarPositions(sender);
               } else {
                 // tell the client they did a bad pw
                 outgoing_message.bytes[0] = (u8)MessageBadPw;
@@ -723,20 +743,7 @@ fn void* gameLoop(void* params) {
 
               sendMessagePlayerDetails(account->ship, sender);
 
-              // tell the client about the map
-              u32 star_msg_size = 2+MAX_PLANETS;
-              outgoing_message.address = sender;
-              outgoing_message.bytes_len = 1+(star_msg_size*STAR_SYSTEM_COUNT);
-              outgoing_message.bytes[0] = (u8)MessageStarPositions;
-              for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
-                outgoing_message.bytes[1+(i*star_msg_size)] = (u8)state.map[i].x;
-                outgoing_message.bytes[2+(i*star_msg_size)] = (u8)state.map[i].y;
-                for (u32 ii = 0; ii < MAX_PLANETS; ii++) {
-                  outgoing_message.bytes[3+ii+(i*star_msg_size)] = state.map[i].planets[ii].type;
-                }
-              }
-              outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-              printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+              sendMessageStarPositions(sender);
 
               outgoing_message = makeMessageSystemCommodities(&starting_system);
               outgoing_message.address = sender;

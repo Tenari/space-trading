@@ -129,12 +129,12 @@ fn void copyStr(u8* bytes, str cstring) {
 }
 
 fn void clearBox(TuiState* tui, Box box) {
-  for (u32 i = 0; i < box.height; i++) {
-    for (u32 ii = 0; ii < box.width; ii++) {
+  for (u32 i = 0; i <= box.height; i++) {
+    for (u32 ii = 0; ii <= box.width; ii++) {
       u32 pos = XYToPos(box.x+ii, box.y+i, tui->screen_dimensions.width);
       tui->frame_buffer[pos].background = 0;
       tui->frame_buffer[pos].foreground = 0;
-      tui->frame_buffer[pos].bytes[0] = 0;
+      tui->frame_buffer[pos].bytes[0] = ' ';
       tui->frame_buffer[pos].bytes[1] = 0;
       tui->frame_buffer[pos].bytes[2] = 0;
       tui->frame_buffer[pos].bytes[3] = 0;
