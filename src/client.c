@@ -1024,12 +1024,31 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
           moveRowUpDown(user_pressed_up, user_pressed_down);
 
-          renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "Welcome to ", screen_dimensions);
-          renderStrToBuffer(tui->frame_buffer, box.x+2+11, box.y+1, curr.name, screen_dimensions);
+          u32 line = box.y + 1;
+
+          // draw a nifty status-line
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, " $: %d ", state->me.credits);
+          Range1u32 range = {
+            .min = XYToPos(box.x+2, line, screen_dimensions.width),
+            .max = XYToPos(box.x+2+strlen(sbuf), line, screen_dimensions.width),
+          };
+          colorizeRange(tui, range, ANSI_HIGHLIGHT_YELLOW, ANSI_BLACK);
+          renderStrToBuffer(tui->frame_buffer, box.x+2, line, sbuf, screen_dimensions);
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, " %d / %d cargo ", usedVacuumCargoSlots(state->me), state->me.vacuum_cargo_slots);
+          range.min = range.max;
+          range.max = range.min+strlen(sbuf);
+          colorizeRange(tui, range, ANSI_DULL_BLUE, ANSI_WHITE);
+          renderStrToBuffer(tui->frame_buffer, range.min % screen_dimensions.width, line++, sbuf, screen_dimensions);
+
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "Welcome to %s", curr.name);
+          renderStrToBuffer(tui->frame_buffer, box.x+((screen_dimensions.width - strlen(sbuf))/2), line++, sbuf, screen_dimensions);
 
           // the table
           TableDrawInfo info = {
-            .x_offset = box.x+2, .y_offset = box.y+3,
+            .x_offset = box.x+2, .y_offset = ++line,
             .rows = Commodity_Count, .cols = 6,
           };
           MarketCommodity rows[Commodity_Count] = { 0 };
