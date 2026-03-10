@@ -77,22 +77,6 @@ typedef enum SpeechTailDirection {
   SpeechTailDirection_Count
 } SpeechTailDirection;
 
-typedef struct Entity {
-  EntityType type;
-  u8 x;
-  u8 y;
-  u8 color;
-  u64 features;
-  u64 id;
-  StringChunkList name;
-} Entity;
-
-typedef struct EntityList {
-  u64 length; // the currently used length
-  u64 capacity;
-  Entity* items;
-} EntityList;
-
 typedef struct TransactionResult {
   bool buying;
   u32 qty;
@@ -108,13 +92,11 @@ typedef struct ParsedServerMessage {
   u32 ip2;
   u64 id;
   u64 server_frame;
-  XYZ xyz;
   Pos2u8 positions[STAR_SYSTEM_COUNT];
   PlanetType planet_types[MAX_PLANETS*STAR_SYSTEM_COUNT];
   StarSystem sys;
   PlayerShip ship;
   TransactionResult tx_result;
-  //Entity entities[PARSED_CLIENT_ENTITY_LEN];
   //u64 ids[PARSED_IDS_LEN];
 } ParsedServerMessage;
 
@@ -145,11 +127,9 @@ typedef struct MenuState {
 typedef struct GameState {
   Screen screen;
   Screen old_screen;
-  EntityList entities;
   PlayerShip me;
   u64 server_frame;
   u64 loop_count;
-  Arena entity_arena;
   StringArena string_arena;
   LoginState login_state;
   MenuState menu;
@@ -220,33 +200,6 @@ fn ParsedServerMessage* psmThreadSafeNonblockingQueuePop(ParsedServerMessageThre
   } unlockMutex(&q->mutex);
 
   return result;
-}
-
-fn void entityPush(EntityList* list, Entity e) {
-  if (list->length >= list->capacity) {
-    arenaAllocArray(&state.entity_arena, Entity, list->capacity);
-    list->capacity = list->capacity * 2;
-  }
-  list->items[list->length] = e;
-  list->length += 1;
-}
-
-fn bool entityDelete(EntityList* list, u64 id) {
-  assert(list->length > 0);
-  if (list->items[list->length - 1].id == id) {
-    list->length -= 1;
-    return true;
-  } else {
-    for (u32 i = 0; i < list->length; i++) {
-      if (list->items[i].id == id) {
-        // copy the last one over the one we are deleting
-        list->items[i] = list->items[list->length - 1];
-        list->length -= 1;
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 fn void addSystemMessage(u8* msg) {
@@ -341,13 +294,6 @@ fn void renderStaticAssetToPixelBuffer(TuiState* tui, u8* asset, u32 len, u16 x,
   }
 }
 
-fn void clearServerSentState() {
-  arenaClear(&state.entity_arena);
-  state.entities.capacity = 64;
-  state.entities.length = 0;
-  state.entities.items = arenaAllocArray(&state.entity_arena, Entity, state.entities.capacity);
-}
-
 fn void resetTabRow(Tab tab) {
   if (state.menu.selected_index == TabStation) {
     state.row.len = Commodity_Count;
@@ -440,7 +386,7 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       msg_pos += 4;
       parsed.ship.cu_m_o2 = readU32FromBufferLE(message + msg_pos);
       msg_pos += 4;
-      parsed.ship.credits = readF32FromBufferLE(message + msg_pos);
+      parsed.ship.credits = readU32FromBufferLE(message + msg_pos);
       msg_pos += 4;
       parsed.ship.id = readU64FromBufferLE(message + msg_pos);
       msg_pos += 8;
@@ -697,7 +643,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       f32 mortgage_rate = calcInterestRate(selected_ship_cost, STARTING_DOWN_PAYMENT);
       f32 r = mortgage_rate / 100.0;
       u32 payment = principal_borrowed * r;
-      sprintf(sbuf, "Mortgage: $%d @ %f%% = $%d interest after first turn", selected_ship_cost - STARTING_DOWN_PAYMENT, mortgage_rate, payment);
+      sprintf(sbuf, "Mortgage: $%d @ %.2f%% = $%d interest after first turn", selected_ship_cost - STARTING_DOWN_PAYMENT, mortgage_rate, payment);
       renderStrToBuffer(tui->frame_buffer, 5, ++line, sbuf, screen_dimensions);
       line++;
       // the table
@@ -936,7 +882,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
 
           MemoryZero(sbuf, SBUFLEN);
-          sprintf(sbuf, "Credits: %.2f", state->me.credits);
+          sprintf(sbuf, "Credits: %d", state->me.credits);
           renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
 
           u32 used_cargo = usedVacuumCargoSlots(state->me);
@@ -1363,10 +1309,6 @@ i32 main(i32 argc, ptr argv[]) {
 
   // clear and init the state
   arenaInit(&permanent_arena);
-  arenaInit(&state.entity_arena);
-  state.entities.capacity = 64;
-  state.entities.length = 0;
-  state.entities.items = arenaAllocArray(&state.entity_arena, Entity, state.entities.capacity);
   arenaInit(&state.string_arena.a);
   state.string_arena.mutex = newMutex();
   state.message_input = stringChunkListInit(&state.string_arena);

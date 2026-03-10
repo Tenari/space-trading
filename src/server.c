@@ -17,7 +17,6 @@
 #include "string_chunk.c"
 
 ///// CONSTANTS
-#define MAX_ENTITIES (2<<18)
 #define LEFT_ROOM_ENTITES_LEN (KB(1))
 #define ROOM_MAP_COLLISIONS_LEN MAX_ROOMS/8
 #define CLIENT_COMMAND_LIST_LEN 8
@@ -282,7 +281,7 @@ fn UDPMessage makeMessagePlayerDetails(PlayerShip ship) {
   msg_i += writeF32ToBufferLE(outgoing_message.bytes + msg_i, ship.interest_rate);
   msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, ship.cu_m_fuel);
   msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, ship.cu_m_o2);
-  msg_i += writeF32ToBufferLE(outgoing_message.bytes + msg_i, ship.credits);
+  msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, ship.credits);
   msg_i += writeU64ToBufferLE(outgoing_message.bytes + msg_i, ship.id);
   for (u32 i = 0; i < Commodity_Count; i++) {
     msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, ship.commodities[i]);
@@ -524,14 +523,15 @@ fn void* gameLoop(void* params) {
         switch (msg.type) {
           case CommandPayMortgage: {
             Account* account = &state.accounts[client->account_id];
-            f32 amount_to_pay = (f32)msg.id;
-            if (account->ship.credits >= amount_to_pay) {
-              account->ship.credits -= amount_to_pay;
-              account->ship.remaining_mortgage -= msg.id;
-            } else {
-              account->ship.remaining_mortgage -= (u32)account->ship.credits;
-              account->ship.credits = 0.0;
+            u32 amount_to_pay = msg.id;
+            if (amount_to_pay > account->ship.credits) {
+              amount_to_pay = account->ship.credits;
             }
+            if (amount_to_pay > account->ship.remaining_mortgage) {
+              amount_to_pay = account->ship.remaining_mortgage;
+            }
+            account->ship.credits -= amount_to_pay;
+            account->ship.remaining_mortgage -= amount_to_pay;
             account->changed = true;
             sendMessagePayoffResult(sender);
           } break;
@@ -839,7 +839,8 @@ fn void* gameLoop(void* params) {
         // increase the mortgage from interest
         if (!shipIsNull(&acct->ship)) {
           if (acct->ship.remaining_mortgage > 0) {
-            acct->ship.remaining_mortgage += acct->ship.remaining_mortgage * (acct->ship.interest_rate / 100.0);
+            f64 compounding = ((f64)acct->ship.remaining_mortgage) * (f64)(acct->ship.interest_rate / 100.0);
+            acct->ship.remaining_mortgage += (u32)compounding;
           }
         }
       }
@@ -853,7 +854,7 @@ fn void* gameLoop(void* params) {
         if (acct->ship.remaining_mortgage == 0) {
           state.winner_id = acct->id;
           state.someone_won = true;
-          printf("someone WON!!! %d\n", i);
+          printf("%s WON!!! %d\n", acct->name.bytes, i);
           acct->changed = true;
           break;
         }
@@ -961,7 +962,7 @@ i32 main(i32 argc, ptr argv[]) {
           setLowProductionCommodity(p, CommodityHighGradeOre);
           setLowProductionCommodity(p, CommodityCommonMetals);
           setLowProductionCommodity(p, CommodityRareMetals);
-          setLowProductionCommodity(p, CommodityPreciousMetals);
+          //setLowProductionCommodity(p, CommodityPreciousMetals);
         } break;
         case PlanetTypeGas: {
           // a lot of fuel and chemicals
@@ -975,7 +976,7 @@ i32 main(i32 argc, ptr argv[]) {
           setLowProductionCommodity(p, CommodityHighGradeOre);
           setLowProductionCommodity(p, CommodityCommonMetals);
           setLowProductionCommodity(p, CommodityRareMetals);
-          setLowProductionCommodity(p, CommodityPreciousMetals);
+          //setLowProductionCommodity(p, CommodityPreciousMetals);
           setLowProductionCommodity(p, CommodityClothes);
           setLowProductionCommodity(p, CommodityRawTextiles);
           setLowProductionCommodity(p, CommodityGlass);
@@ -1002,7 +1003,7 @@ i32 main(i32 argc, ptr argv[]) {
           setHighProductionCommodity(p, CommodityHighGradeOre);
           setHighProductionCommodity(p, CommodityCommonMetals);
           setHighProductionCommodity(p, CommodityRareMetals);
-          setHighProductionCommodity(p, CommodityPreciousMetals);
+          //setHighProductionCommodity(p, CommodityPreciousMetals);
           setHighProductionCommodity(p, CommoditySemiConductors);
 
           setLowProductionCommodity(p, CommodityHydrogenFuel);

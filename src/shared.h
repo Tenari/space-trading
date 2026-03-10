@@ -12,24 +12,6 @@
 #define MAP_HEIGHT (12)
 #define MAX_PLANETS (3)
 
-typedef enum EntityFeature {
-  FeatureWalksAround,
-  FeatureCanFight,
-  EntityFeature_Count
-} EntityFeature;
-
-typedef enum EntityType {
-  EntityNull,
-  EntityStarSystem,
-  EntityCharacter,
-  EntityType_Count,
-} EntityType;
-static const char* ENTITY_STRINGS[] = {
-  "NULL",
-  "StarSystem",
-  "Character",
-};
-
 typedef enum ShipType {
   ShipSparrow,
   ShipDart,
@@ -37,6 +19,7 @@ typedef enum ShipType {
 //  ShipNX400,
   ShipType_Count,
 } ShipType;
+
 global str SHIP_TYPE_STRINGS[] = {
   "Sparrow",
   "Dart",
@@ -89,11 +72,6 @@ global ShipTemplate SHIPS[] = {
   },*/
 };
 
-fn f32 calcInterestRate(u32 cost, u32 down_payment) {
-  f32 mortgage_rate = 10.0 *(1.0 - (3.0*(f32)down_payment / ((f32)cost/3.0)));
-  return mortgage_rate;
-}
-
 global FieldDescriptor SHIP_FIELDS[SHIP_DETAIL_COUNT] = {
   { "Type", FieldTypeEnum, offsetof(ShipTemplate, type), 16, (str*)&SHIP_TYPE_STRINGS },
   { "Cost", FieldTypeU32, offsetof(ShipTemplate, base_cost), 8 },
@@ -130,7 +108,7 @@ typedef enum CommodityType {
   CommoditySemiConductors,
   CommodityCommonMetals,
   CommodityRareMetals,
-  CommodityPreciousMetals,
+//  CommodityPreciousMetals,
   CommodityAlcohol,
   CommodityClothes,
   CommodityPersonalSundries,
@@ -153,13 +131,13 @@ global str COMMODITY_STRINGS[Commodity_Count] = {
   "Electronics",
   "Glass",
   "Hand Tools",
-  "Semi-conductors (Silicon, Arsenic, Boron)",
-  "Common Metals (Iron, Nickel, Zinc)",
-  "Rare Metals (Titanium, Chromium)",
-  "Precious Metals (Silver, Gold, Platinum)",
+  "Semi-conductors",//"Semi-conductors (Silicon, Arsenic, Boron)",
+  "Common Metals",//"Common Metals (Iron, Nickel, Zinc)",
+  "Rare Metals",//"Rare Metals (Titanium, Chromium)",
+//  "Precious Metals (Silver, Gold, Platinum)",
   "Alcohol",
   "Clothes",
-  "Personal Sundries (Cutlery, Toys, Misc)",
+  "Personal Sundries",//"Personal Sundries (Cutlery, Toys, Misc)",
   "Industrial Chemicals",
 };
 
@@ -188,11 +166,11 @@ typedef struct Commodity {
 global Commodity COMMODITIES[Commodity_Count] = {
   { .type = CommodityHydrogenFuel,  .unit = StorageUnitKg,
     .name = "Hydrogen Fuel",
-    .price = 10, .qty = 1000, .consumption = 200,
+    .price = 10, .qty = 10000, .consumption = 100,
   },
   { .type = CommodityOxygen,  .unit = StorageUnitKg,
     .name = "Oxygen",
-    .price = 5, .qty = 10000, .consumption = 500,
+    .price = 5, .qty = 10000, .consumption = 100,
   },
   { .type = CommodityWater,  .unit = StorageUnitContainer,
     .name = "Water",
@@ -243,21 +221,21 @@ global Commodity COMMODITIES[Commodity_Count] = {
     .price = 5000, .qty = 5, .consumption = 1,
   },
   { .type = CommoditySemiConductors,  .unit = StorageUnitContainer,
-    .name = "Semi-conductors (Silicon, Arsenic, Boron)",
+    .name = "Semi-conductors",//"Semi-conductors (Silicon, Arsenic, Boron)",
     .price = 1800, .qty = 40, .consumption = 3,
   },
   { .type = CommodityCommonMetals,  .unit = StorageUnitContainer,
-    .name = "Common Metals (Iron, Nickel, Zinc)",
+    .name = "Common Metals",//"Common Metals (Iron, Nickel, Zinc)",
     .price = 1800, .qty = 40, .consumption = 3,
   },
   { .type = CommodityRareMetals,  .unit = StorageUnitContainer,
-    .name = "Rare Metals (Titanium, Chromium)",
+    .name = "Rare Metals",//"Rare Metals (Titanium, Chromium)",
     .price = 1800, .qty = 40, .consumption = 3,
   },
-  { .type = CommodityPreciousMetals,  .unit = StorageUnitKg,
+/*  { .type = CommodityPreciousMetals,  .unit = StorageUnitKg,
     .name = "Precious Metals (Silver, Gold, Platinum)",
     .price = 1800, .qty = 40, .consumption = 3,
-  },
+  },*/
   { .type = CommodityAlcohol,  .unit = StorageUnitContainer,
     .name = "Alcohol",
     .price = 1800, .qty = 40, .consumption = 3,
@@ -267,7 +245,7 @@ global Commodity COMMODITIES[Commodity_Count] = {
     .price = 1800, .qty = 40, .consumption = 3,
   },
   { .type = CommodityPersonalSundries,  .unit = StorageUnitContainer,
-    .name = "Personal Sundries (Cutlery, Toys, Misc)",
+    .name = "Personal Sundries",//"Personal Sundries (Cutlery, Toys, Misc)",
     .price = 1800, .qty = 40, .consumption = 3,
   },
   { .type = CommodityIndustrialChemicals,  .unit = StorageUnitContainer,
@@ -294,30 +272,6 @@ global FieldDescriptor MARKET_COMMODITY_FIELDS[Commodity_Count] = {
   { "Owned", FieldTypeU32, offsetof(MarketCommodity, owned), 6 },
 };
 
-fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
-  f32 result = 0.0;
-  Commodity details = COMMODITIES[type];
-  f32 max = details.price * 5;
-  f32 min = (f32)details.price / 5.0;
-  if (quantity == 0) {
-    return max;
-  }
-  result = ((f32)details.price) * ((f32)details.qty / (f32)quantity); // the bid/ask spread
-  if (max < result) {
-    result = max;
-  }
-  if (min > result) {
-    result = min;
-  }
-  // the bid/ask spread
-  if (bid) {
-    result = result * 0.98;
-  } else {
-    result = result * 1.02;
-  }
-  return result;
-}
-
 typedef struct PlayerShip {
   ShipType type;
   bool ready_to_depart;
@@ -334,20 +288,10 @@ typedef struct PlayerShip {
   f32 interest_rate;
   u32 cu_m_fuel; // we are just saying you can buy as much fuel as you want
   u32 cu_m_o2; // we are just saying you can buy as much o2 as you want
-  f32 credits;
+  u32 credits;
   u64 id;
   u32 commodities[Commodity_Count];
 } PlayerShip;
-
-fn u32 usedVacuumCargoSlots(PlayerShip ship) {
-  u32 used_cargo = 0;
-  for (u32 i = 0; i < Commodity_Count; i++) {
-    if (COMMODITIES[i].unit == StorageUnitContainer) {
-      used_cargo += ship.commodities[i];
-    }
-  }
-  return used_cargo;
-}
 
 typedef enum PlanetType {
   PlanetTypeNull,
@@ -418,12 +362,6 @@ global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
   "Eltanin",
 };
 
-typedef struct XYZ {
-  i32 x;
-  i32 y;
-  i32 z;
-} XYZ;
-
 typedef enum Direction {
   DirectionInvalid,
   North,
@@ -488,11 +426,51 @@ static const char* MESSAGE_STRINGS[] = {
   "PayoffResult",
 };
 
+///// shared helper functions
 fn u32 fuelCostForTravel(u32 drive_efficiency, Pos2 current, Pos2 dest) {
   u32 x_distance = Max(current.x, dest.x) - Min(current.x, dest.x);
   u32 y_distance = Max(current.y, dest.y) - Min(current.y, dest.y);
   u32 fuel_per_dist = 100 - drive_efficiency;
   return (x_distance + y_distance) * fuel_per_dist;
+}
+
+fn u32 usedVacuumCargoSlots(PlayerShip ship) {
+  u32 used_cargo = 0;
+  for (u32 i = 0; i < Commodity_Count; i++) {
+    if (COMMODITIES[i].unit == StorageUnitContainer) {
+      used_cargo += ship.commodities[i];
+    }
+  }
+  return used_cargo;
+}
+
+fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
+  f32 result = 0.0;
+  Commodity details = COMMODITIES[type];
+  f32 max = details.price * 5;
+  f32 min = (f32)details.price / 5.0;
+  if (quantity == 0) {
+    return max;
+  }
+  result = ((f32)details.price) * ((f32)details.qty / (f32)quantity); // the bid/ask spread
+  if (max < result) {
+    result = max;
+  }
+  if (min > result) {
+    result = min;
+  }
+  // the bid/ask spread
+  if (bid) {
+    result = result * 0.98;
+  } else {
+    result = result * 1.02;
+  }
+  return result;
+}
+
+fn f32 calcInterestRate(u32 cost, u32 down_payment) {
+  f32 mortgage_rate = 10.0 *(1.0 - (3.0*(f32)down_payment / ((f32)cost/3.0)));
+  return mortgage_rate;
 }
 
 #endif //GAMESHARED_H
