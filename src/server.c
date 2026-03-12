@@ -417,7 +417,9 @@ fn void* sendNetworkUpdates(void* sock) {
   tctxInit(&tctx);
   i32* socket_ptr = (i32*)sock;
   i32 socket = *socket_ptr;
+  u64 send_loop = 0;
   while (true) {
+    send_loop += 1;
     u64 loop_start = osTimeMicrosecondsNow();
 
     // 1. clear out our "outgoingMessage" queue
@@ -434,6 +436,13 @@ fn void* sendNetworkUpdates(void* sock) {
       }
     }
 
+    UDPMessage sys_udp_msg = { 0 };
+    sys_udp_msg = makeMessageSystemCommodities(&state.map[send_loop % STAR_SYSTEM_COUNT]);
+    u8List sys_msg = {
+      .capacity = UDP_MAX_MESSAGE_LEN,
+      .items = sys_udp_msg.bytes,
+      .length = sys_udp_msg.bytes_len,
+    };
     lockMutex(&state.client_mutex); {
       // WARNING the `i` starts at 1 here because state.clients.items[0] is a "null" Client
       for (u32 i = 1; i < state.clients.length; i++) {
@@ -442,9 +451,10 @@ fn void* sendNetworkUpdates(void* sock) {
           memset(&state.clients.items[i], 0, sizeof(Client));
           continue;
         }
-        //if (client.character_eid == 0) {
-        //  continue; // they are still creating their character
-        //}
+
+        // every "send-frame" we send each connnected client the current prices for a different system
+        // so that the prices mostly stay up to date pretty quickly without having to track changes
+        sendUDPu8List(socket, &client.address, &sys_msg);
 
         // update all the changed systems
         UDPMessage msg_data;

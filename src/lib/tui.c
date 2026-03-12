@@ -602,7 +602,7 @@ fn void renderTable(TuiState* tui, TableDrawInfo t, u32 selected_index, FieldDes
           renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, tmp_buffer, tui->screen_dimensions);
         } break;
         case FieldTypeString: {
-          renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, (ptr)field_ptr, tui->screen_dimensions);
+          renderStrToBuffer(tui->frame_buffer, t.x_offset+col_x_pos, t.y_offset, *(ptr *)field_ptr, tui->screen_dimensions);
         } break;
         case FieldType_Count:
           break;

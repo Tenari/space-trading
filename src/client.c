@@ -46,6 +46,7 @@ typedef enum ShipTabStates {
 
 typedef enum StationTabStates {
   StationTabStateTable,
+  StationTabStateComparisonTable,
   StationTabStateTransact,
   StationTabStateResult,
   StationTabStateLoading,
@@ -110,6 +111,13 @@ typedef struct ParsedServerMessageThreadQueue {
   Cond not_full;
 } ParsedServerMessageThreadQueue;
 
+typedef struct CompareCommodity {
+  str system_name;
+  u32 bid;
+  u32 ask;
+  u32 fuel_distance;
+} CompareCommodity;
+
 typedef struct LoginState {
   LoginScreenState state;
   u8 selected_field;
@@ -157,6 +165,13 @@ global GameState state = {0};
 global OutgoingMessageQueue* network_send_queue = {0};
 global ParsedServerMessageThreadQueue* network_recv_queue = {0};
 global str TAB_STRS[Tab_Count] = {"Debug", "Chat", "Map", "Ship", "Station"};
+global FieldDescriptor COMPARE_COMMODITY_FIELDS[STAR_SYSTEM_COUNT] = {
+  { "System", FieldTypeString, offsetof(CompareCommodity, system_name), 16 },
+  { "Bid", FieldTypeU32, offsetof(CompareCommodity, bid), 6 },
+  { "Ask", FieldTypeU32, offsetof(CompareCommodity, ask), 6 },
+  { "Travel Fuel kg", FieldTypeU32, offsetof(CompareCommodity, fuel_distance), 16 },
+};
+
 
 ///// FUNCTIONS
 fn ParsedServerMessageThreadQueue* newPSMThreadQueue(Arena* a) {
@@ -354,6 +369,7 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       }
     } break;
     case MessageSystemCommodities: {
+      addSystemMessage((u8*)"Got prices ");
       parsed.id = (u64)message[msg_pos++];
       u32 planet_count = message[msg_pos++];
       for (u32 i = 0; i < planet_count; i++) {
@@ -432,6 +448,10 @@ fn void* sendNetworkUpdates(void* udp) {
     sendUDPu8List(socket_fd, &msg.address, &bytes_list);
   }
   return NULL;
+}
+
+fn i32 compareCompareCommodity(const void *a, const void *b) {
+  return ((CompareCommodity*)b)->bid - ((CompareCommodity*)a)->bid;
 }
 
 fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count) {
@@ -516,6 +536,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       case MessageSystemCommodities: {
         u32 sys_idx = msg.id;
         StarSystem* sys = &state->map[sys_idx];
+        sys->idx = sys_idx;
         for (u32 i = 0; i < MAX_PLANETS; i++) {
           for (u32 ii = 0; ii < Commodity_Count; ii++) {
             sys->planets[i].commodities[ii] = msg.sys.planets[i].commodities[ii];
@@ -550,6 +571,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   // operate on screen-based input+state
   bool user_pressed_tab = input_buffer[0] == ASCII_TAB && input_buffer[1] == 0;
   bool user_pressed_shift_tab = input_buffer[0] == '\x1b' && input_buffer[1] == '[' && input_buffer[2] == 'Z';
+  bool user_pressed_space = input_buffer[0] == ' ' && input_buffer[1] == 0;
   bool user_pressed_esc = input_buffer[0] == ASCII_ESCAPE && input_buffer[1] == 0;
   bool user_pressed_a_number = input_buffer[0] >= '0' && input_buffer[0] <= '9' && input_buffer[1] == 0;
   bool user_pressed_up = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 65;
@@ -1006,23 +1028,12 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         } break;
         case TabStation: {
           if (input_buffer[0] == 'q' || user_pressed_esc) {
-            switch (state->station_tab_state) {
-              case StationTabStateTable:
-                should_quit = true;
-                break;
-              case StationTabStateTransact:
-                state->station_tab_state = StationTabStateTable;
-                break;
-              case StationTabStateResult:
-                state->station_tab_state = StationTabStateTransact;
-                break;
-              case StationTabStateLoading:
-                state->station_tab_state = StationTabStateTable;
-                break;
-              case StationTabStates_Count: assert(false && "something has gone horribly wrong");
+            if (state->station_tab_state == StationTabStateTable) {
+              should_quit = true;
+            } else {
+              state->station_tab_state = StationTabStateTable;
             }
           }
-          moveRowUpDown(user_pressed_up, user_pressed_down);
 
           u32 line = box.y + 1;
 
@@ -1051,73 +1062,100 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             .x_offset = box.x+2, .y_offset = ++line,
             .rows = Commodity_Count, .cols = 6,
           };
-          MarketCommodity rows[Commodity_Count] = { 0 };
-          for (u32 i = 0; i < Commodity_Count; i++) {
-            Commodity c = COMMODITIES[i];
-            u32 qty = curr.planets[0].commodities[i] + curr.planets[1].commodities[i] + curr.planets[2].commodities[i];
-            rows[i].type = c.type;
-            rows[i].unit = c.unit;
-            rows[i].bid = priceForCommodity(i, qty, true);
-            rows[i].ask = priceForCommodity(i, qty, false);
-            rows[i].qty = qty;
-            rows[i].owned = state->me.commodities[i];
-          }
-          renderTable(tui, info, state->row.selected_index, MARKET_COMMODITY_FIELDS, 1, rows, sizeof(MarketCommodity));
-
-          if (state->station_tab_state != StationTabStateTable) {
-            if (user_pressed_right) {
-              state->modal_choice.selected_index = 1;
-            } else if (user_pressed_left) {
-              state->modal_choice.selected_index = 0;
-            } else if (user_pressed_a_number) {
-              String next_char = { 1, 2, (char*)input_buffer };
-              stringChunkListAppend(&state->string_arena, &state->message_input, next_char);
-            } else if (user_pressed_backspace) {
-              stringChunkListDeleteLast(&state->string_arena, &state->message_input);
+          Commodity c = COMMODITIES[state->row.selected_index];
+          u32 selected_qty = curr.planets[0].commodities[c.type] + curr.planets[1].commodities[c.type] + curr.planets[2].commodities[c.type];
+          MarketCommodity selected_commodity = {
+            .type = c.type,
+            .unit = c.unit,
+            .bid = priceForCommodity(c.type, selected_qty, true),
+            .ask = priceForCommodity(c.type, selected_qty, false),
+            .qty = selected_qty,
+            .owned = state->me.commodities[c.type],
+          };
+          if (state->station_tab_state == StationTabStateComparisonTable) {
+            info.rows = STAR_SYSTEM_COUNT;
+            info.cols = 4;
+            CompareCommodity rows[STAR_SYSTEM_COUNT] = { 0 };
+            Pos2 current_pos = { curr.x, curr.y };
+            for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+              StarSystem sys = state->map[i];
+              Pos2 sys_pos = { sys.x, sys.y };
+              u32 qty = sys.planets[0].commodities[c.type]
+                + sys.planets[1].commodities[c.type] + sys.planets[2].commodities[c.type];
+              rows[i].system_name = sys.name;
+              rows[i].bid = priceForCommodity(c.type, qty, true);
+              rows[i].ask = priceForCommodity(c.type, qty, false);
+              rows[i].fuel_distance = fuelCostForTravel(state->me.drive_efficiency, current_pos, sys_pos);
             }
+            qsort(rows, STAR_SYSTEM_COUNT, sizeof(CompareCommodity), compareCompareCommodity);
+            u32 curr_idx = 0;
+            for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+              if (rows[i].fuel_distance == 0) {
+                curr_idx = i;
+              }
+            }
+            renderTable(tui, info, curr_idx, COMPARE_COMMODITY_FIELDS, 1, rows, sizeof(CompareCommodity));
+          } else { // normal table
+            MarketCommodity rows[Commodity_Count] = { 0 };
+            for (u32 i = 0; i < Commodity_Count; i++) {
+              Commodity c = COMMODITIES[i];
+              u32 qty = curr.planets[0].commodities[i] + curr.planets[1].commodities[i] + curr.planets[2].commodities[i];
+              rows[i].type = c.type;
+              rows[i].unit = c.unit;
+              rows[i].bid = priceForCommodity(i, qty, true);
+              rows[i].ask = priceForCommodity(i, qty, false);
+              rows[i].qty = qty;
+              rows[i].owned = state->me.commodities[i];
+            }
+            renderTable(tui, info, state->row.selected_index, MARKET_COMMODITY_FIELDS, 1, rows, sizeof(MarketCommodity));
+          }
 
-            // draw the modal
-            bool buy_selected = state->modal_choice.selected_index == 0;
-            Box modal_outline = {
-              .x = (tui->screen_dimensions.width - 50) / 2,
-              .y = (tui->screen_dimensions.height - 15) / 2,
-              .height = 15,
-              .width = 50,
-            };
+          // calculate and maybe draw the modal outline
+          Box modal_outline = {
+            .x = (tui->screen_dimensions.width - 50) / 2,
+            .y = (tui->screen_dimensions.height - 15) / 2,
+            .height = 15,
+            .width = 50,
+          };
+          if (state->station_tab_state != StationTabStateTable && state->station_tab_state != StationTabStateComparisonTable) {
+            // draw the modal outline
             clearBox(tui, modal_outline);
             drawAnsiBox(tui->frame_buffer, modal_outline, tui->screen_dimensions, false);
-            u32 y_off = modal_outline.y+2;
-            str cname = COMMODITIES[state->row.selected_index].name;
-            if (state->station_tab_state == StationTabStateResult) {
-              if (state->tx_result.buying) {
-                renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-10)/2), y_off++, "Purchased!", screen_dimensions);
-              } else {
-                renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-5)/2), y_off++, "Sold!", screen_dimensions);
-              }
-              MemoryZero(sbuf, SBUFLEN);
-              sprintf(sbuf, "%d %s", state->tx_result.qty, cname);
-              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
-              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-3)/2), y_off++, "for", screen_dimensions);
-              MemoryZero(sbuf, SBUFLEN);
-              sprintf(sbuf, "%d credits", state->tx_result.cr);
-              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
-              y_off++;
-              u32 exit_x = modal_outline.x+((modal_outline.width-4)/2);
-              u32 pos = XYToPos(exit_x, y_off, tui->screen_dimensions.width);
-              for (u32 i = 0; i < 4; i++) {
-                tui->frame_buffer[pos+i].background = ANSI_WHITE;
-                tui->frame_buffer[pos+i].foreground = ANSI_BLACK;
-              }
-              tui->cursor.x = exit_x;
-              tui->cursor.y = y_off;
-              renderStrToBuffer(tui->frame_buffer, exit_x, y_off++, "EXIT", screen_dimensions);
+          }
+          // common/shared variables
+          bool buy_selected = state->modal_choice.selected_index == 0;
+          u32 y_off = modal_outline.y+2;
+          str cname = COMMODITIES[state->row.selected_index].name;
 
+          switch (state->station_tab_state) {
+            case StationTabStateTable: {
+              moveRowUpDown(user_pressed_up, user_pressed_down);
               if (user_pressed_enter) {
+                state->station_tab_state = StationTabStateTransact;
+                state->modal_choice.len = 2;
+                state->modal_choice.selected_index = 0;
+              } else if (user_pressed_space) {
+                state->station_tab_state = StationTabStateComparisonTable;
+              }
+            } break;
+            case StationTabStateComparisonTable: {
+              if (user_pressed_backspace) {
                 state->station_tab_state = StationTabStateTable;
               }
-            } else if (state->station_tab_state == StationTabStateLoading) {
-              renderStrToBuffer(tui->frame_buffer, modal_outline.x+2, y_off, "Loading...", screen_dimensions);
-            } else { // StationTabStateTransact
+              // TODO
+            } break;
+            case StationTabStateTransact: {
+              if (user_pressed_right) {
+                state->modal_choice.selected_index = 1;
+              } else if (user_pressed_left) {
+                state->modal_choice.selected_index = 0;
+              } else if (user_pressed_a_number) {
+                String next_char = { 1, 2, (char*)input_buffer };
+                stringChunkListAppend(&state->string_arena, &state->message_input, next_char);
+              } else if (user_pressed_backspace) {
+                stringChunkListDeleteLast(&state->string_arena, &state->message_input);
+              }
+
               // draw the "purchase order" modal
               renderStrToBuffer(tui->frame_buffer, modal_outline.x+(modal_outline.width/2)-strlen(cname), modal_outline.y+1, cname, screen_dimensions);
               u32 buy_x = modal_outline.x+2;
@@ -1155,7 +1193,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               }
               String input_q_str = stringChunkToString(&permanent_arena, state->message_input);
               u32 input_quantity = atoi(input_q_str.bytes);
-              u32 credits = input_quantity * (buy_selected ? rows[state->row.selected_index].ask : rows[state->row.selected_index].bid);
+              u32 credits = input_quantity * (buy_selected ? selected_commodity.ask : selected_commodity.bid);
               arenaDealloc(&permanent_arena, input_q_str.capacity);
               MemoryZero(sbuf, SBUFLEN);
               sprintf(sbuf, "%d", credits);
@@ -1174,22 +1212,48 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
                 // 3. quantity
                 msg_idx += writeU32ToBufferLE(msg.bytes + msg_idx, input_quantity);
                 // 4. commodity
-                msg.bytes[msg_idx++] = rows[state->row.selected_index].type;
+                msg.bytes[msg_idx++] = selected_commodity.type;
                 msg.bytes_len = msg_idx;
 
                 outgoingMessageQueuePush(network_send_queue, &msg);
 
                 state->station_tab_state = StationTabStateLoading;
               }
-            }
-          } else {
-            // we are on the table
-            if (user_pressed_enter) {
-              state->station_tab_state = StationTabStateTransact;
-              state->modal_choice.len = 2;
-              state->modal_choice.selected_index = 0;
-            }
+            } break;
+            case StationTabStateResult: {
+              if (state->tx_result.buying) {
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-10)/2), y_off++, "Purchased!", screen_dimensions);
+              } else {
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-5)/2), y_off++, "Sold!", screen_dimensions);
+              }
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%d %s", state->tx_result.qty, cname);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-3)/2), y_off++, "for", screen_dimensions);
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%d credits", state->tx_result.cr);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
+              y_off++;
+              u32 exit_x = modal_outline.x+((modal_outline.width-4)/2);
+              u32 pos = XYToPos(exit_x, y_off, tui->screen_dimensions.width);
+              for (u32 i = 0; i < 4; i++) {
+                tui->frame_buffer[pos+i].background = ANSI_WHITE;
+                tui->frame_buffer[pos+i].foreground = ANSI_BLACK;
+              }
+              tui->cursor.x = exit_x;
+              tui->cursor.y = y_off;
+              renderStrToBuffer(tui->frame_buffer, exit_x, y_off++, "EXIT", screen_dimensions);
+
+              if (user_pressed_enter) {
+                state->station_tab_state = StationTabStateTable;
+              }
+            } break;
+            case StationTabStateLoading: {
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+2, y_off, "Loading...", screen_dimensions);
+            } break;
+            case StationTabStates_Count: assert(false && "invalid station_tab_state"); break;
           }
+
         } break;
         case Tab_Count: {} break;
       }
