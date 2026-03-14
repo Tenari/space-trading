@@ -11,12 +11,16 @@
 #define MAP_WIDTH (36)
 #define MAP_HEIGHT (12)
 #define MAX_PLANETS (3)
+#define MAX_PASSENGER_JOB_OFFERS (16)
+#define MAX_PASSENGER_JOB_PEOPLE (4)
+#define MAX_PASSENGER_JOB_PRICE (10000)
+#define MAX_PASSENGER_BERTHS (8)
 
 typedef enum ShipType {
   ShipSparrow,
   ShipDart,
   ShipHaulerPrimeZ1,
-//  ShipNX400,
+  ShipNX400,
   ShipType_Count,
 } ShipType;
 
@@ -24,7 +28,7 @@ global str SHIP_TYPE_STRINGS[] = {
   "Sparrow",
   "Dart",
   "Hauler-Prime Z-1",
-//  "NX-400",
+  "NX-400",
 };
 
 typedef struct ShipTemplate {
@@ -43,33 +47,33 @@ typedef struct ShipTemplate {
 
 global ShipTemplate SHIPS[] = {
   {
-    .type = ShipSparrow, .drive_efficiency = 10, .life_support_efficiency = 2,
+    .type = ShipSparrow, .drive_efficiency = 10, .life_support_efficiency = 1,
     .vacuum_cargo_slots = 5, .climate_cargo_slots = 0, .passenger_berths = 0,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 1, .base_cost = 100000,
-    .cu_m_fuel = 2000, .cu_m_o2 = 1000,
+    .cu_m_fuel = 2500, .cu_m_o2 = 1000,
   },
   {
-    .type = ShipDart,    .drive_efficiency = 70, .life_support_efficiency = 4,
-    .vacuum_cargo_slots = 10, .climate_cargo_slots = 1, .passenger_berths = 1,
+    .type = ShipDart,    .drive_efficiency = 70, .life_support_efficiency = 3,
+    .vacuum_cargo_slots = 6, .climate_cargo_slots = 0, .passenger_berths = 1,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 150000,
-    .cu_m_fuel = 2000, .cu_m_o2 = 1000,
+    .cu_m_fuel = 2000, .cu_m_o2 = 2000,
   },
   {
-    .type = ShipHaulerPrimeZ1, .drive_efficiency = 50, .life_support_efficiency = 3,
-    .vacuum_cargo_slots = 100, .climate_cargo_slots = 5, .passenger_berths = 0,
+    .type = ShipHaulerPrimeZ1, .drive_efficiency = 50, .life_support_efficiency = 2,
+    .vacuum_cargo_slots = 30, .climate_cargo_slots = 0, .passenger_berths = 0,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 250000,
-    .cu_m_fuel = 2000, .cu_m_o2 = 1000,
+    .cu_m_fuel = 2500, .cu_m_o2 = 1000,
   },
-/*  {
-    .type = ShipNX400, .drive_efficiency = 6, .life_support_efficiency = 8,
-    .vacuum_cargo_slots = 5, .climate_cargo_slots = 5, .passenger_berths = 5,
+  {
+    .type = ShipNX400, .drive_efficiency = 60, .life_support_efficiency = 5,
+    .vacuum_cargo_slots = 3, .climate_cargo_slots = 0, .passenger_berths = 3,
     .passenger_amenities_flags = 0,
-    .smugglers_hold_cu_m = 0, .base_cost = 350000,
-    .cu_m_fuel = 2000, .cu_m_o2 = 1000,
-  },*/
+    .smugglers_hold_cu_m = 0, .base_cost = 250000,
+    .cu_m_fuel = 2000, .cu_m_o2 = 3000,
+  },
 };
 
 global FieldDescriptor SHIP_FIELDS[SHIP_DETAIL_COUNT] = {
@@ -272,6 +276,35 @@ global FieldDescriptor MARKET_COMMODITY_FIELDS[Commodity_Count] = {
   { "Owned", FieldTypeU32, offsetof(MarketCommodity, owned), 6 },
 };
 
+typedef struct Passenger {
+  u8 people;
+  u8 goal_system_idx;
+  u8 turns_remaining;
+  u32 reward;
+} Passenger;
+
+typedef struct PassengerJobOffer {
+  u8 goal_system_idx;
+  u8 people; // 1 - 4, affects how much oxygen they consume
+  u8 time_limit; // # of turns until they leave your ship without paying
+  u32 offer;
+} PassengerJobOffer;
+
+typedef struct DisplayPassengerJobOffer {
+  str destination;
+  u8 people;
+  u8 time_limit;
+  u32 offer;
+} DisplayPassengerJobOffer;
+
+
+global FieldDescriptor PASSENGER_JOB_OFFER_FIELDS[] = {
+  { "Destination", FieldTypeString, offsetof(DisplayPassengerJobOffer, destination), 44 },
+  { "People", FieldTypeU8, offsetof(DisplayPassengerJobOffer, people), 6 },
+  { "Turns", FieldTypeU8, offsetof(DisplayPassengerJobOffer, time_limit), 6 },
+  { "Offer", FieldTypeU32, offsetof(DisplayPassengerJobOffer, offer), 6 },
+};
+
 typedef struct PlayerShip {
   ShipType type;
   bool ready_to_depart;
@@ -291,6 +324,7 @@ typedef struct PlayerShip {
   u32 credits;
   u64 id;
   u32 commodities[Commodity_Count];
+  Passenger passengers[MAX_PASSENGER_BERTHS];
 } PlayerShip;
 
 typedef enum PlanetType {
@@ -317,6 +351,7 @@ typedef struct StarSystem {
   u32 idx;
   str name;
   Planet planets[MAX_PLANETS];
+  PassengerJobOffer offers[MAX_PASSENGER_JOB_OFFERS];
 } StarSystem;
 
 global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
@@ -382,6 +417,7 @@ typedef enum CommandType {
   CommandReadyStatus,
   CommandSetDestination,
   CommandPayMortgage,
+  CommandAcceptPassengerJob,
   CommandType_Count,
 } CommandType;
 
@@ -393,10 +429,9 @@ static const char* command_type_strings[CommandType_Count] = {
   "ReadyStatus",
   "SetDestination",
   "PayMortgage",
+  "AcceptPassengerJob",
 };
 
-#define ENTITY_HEADER_MESSAGE_SIZE (8+8+1+1+1)
-#define ENTITY_MESSAGE_SIZE (ENTITY_HEADER_MESSAGE_SIZE+2+2+2+2+8+1+1)
 typedef enum Message {
   MessageInvalid,
   MessageCharacterId,
@@ -409,6 +444,7 @@ typedef enum Message {
   MessageTurnTick,
   MessageGameOver,
   MessagePayoffResult,
+  MessageSystemPassengers,
   Message_Count,
 } Message;
 
@@ -424,6 +460,7 @@ static const char* MESSAGE_STRINGS[] = {
   "TurnTick",
   "GameOver",
   "PayoffResult",
+  "SystemPassengers",
 };
 
 ///// shared helper functions
@@ -471,6 +508,24 @@ fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
 fn f32 calcInterestRate(u32 cost, u32 down_payment) {
   f32 mortgage_rate = 10.0 *(1.0 - (3.0*(f32)down_payment / ((f32)cost/3.0)));
   return mortgage_rate;
+}
+
+fn bool passengerJobEq(PassengerJobOffer a, PassengerJobOffer b) {
+  return a.goal_system_idx == b.goal_system_idx &&
+    a.offer == b.offer &&
+    a.people == b.people &&
+    a.time_limit == b.time_limit;
+}
+
+fn bool shipAvailablePassengerBerths(PlayerShip ship) {
+  u32 used = 0;
+  for (u32 i = 0; i < MAX_PASSENGER_BERTHS; i++) {
+    if (ship.passengers[i].people > 0) {
+      used += 1;
+    }
+  }
+  assert(used <= ship.passenger_berths);
+  return ship.passenger_berths - used;
 }
 
 #endif //GAMESHARED_H

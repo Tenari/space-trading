@@ -33,7 +33,8 @@ typedef enum Tab {
   TabChat,
   TabMap,
   TabShip,
-  TabStation,
+  TabMarket,
+  TabPassengers,
   Tab_Count,
 } Tab;
 
@@ -44,14 +45,22 @@ typedef enum ShipTabStates {
   ShipTabStates_Count,
 } ShipTabStates;
 
-typedef enum StationTabStates {
-  StationTabStateTable,
-  StationTabStateComparisonTable,
-  StationTabStateTransact,
-  StationTabStateResult,
-  StationTabStateLoading,
-  StationTabStates_Count,
-} StationTabStates;
+typedef enum MarketTabStates {
+  MarketTabStateTable,
+  MarketTabStateComparisonTable,
+  MarketTabStateTransact,
+  MarketTabStateResult,
+  MarketTabStateLoading,
+  MarketTabStates_Count,
+} MarketTabStates;
+
+typedef enum PassengersTabStates {
+  PassengersTabStateTable,
+  PassengersTabStateBookModal,
+  PassengersTabStateLoading,
+  PassengersTabStateResult,
+  PassengersTabStates_Count,
+} PassengersTabStates;
 
 typedef enum Screen {
   ScreenLogin,
@@ -98,7 +107,7 @@ typedef struct ParsedServerMessage {
   StarSystem sys;
   PlayerShip ship;
   TransactionResult tx_result;
-  //u64 ids[PARSED_IDS_LEN];
+  PassengerJobOffer offers[MAX_PASSENGER_JOB_OFFERS];
 } ParsedServerMessage;
 
 typedef struct ParsedServerMessageThreadQueue {
@@ -149,7 +158,7 @@ typedef struct GameState {
   StarSystem map[STAR_SYSTEM_COUNT];
   Pos2 pos;
   u8 destination_sys_idx;
-  StationTabStates station_tab_state;
+  MarketTabStates market_tab_state;
   ShipTabStates ship_tab_states;
   TransactionResult tx_result;
   u64 turn_tick_started_on;
@@ -164,7 +173,7 @@ global u8 system_message_index = 0;
 global GameState state = {0};
 global OutgoingMessageQueue* network_send_queue = {0};
 global ParsedServerMessageThreadQueue* network_recv_queue = {0};
-global str TAB_STRS[Tab_Count] = {"Debug", "Chat", "Map", "Ship", "Station"};
+global str TAB_STRS[Tab_Count] = {"Debug", "Chat", "Map", "Ship", "Market", "Passengers"};
 global FieldDescriptor COMPARE_COMMODITY_FIELDS[STAR_SYSTEM_COUNT] = {
   { "System", FieldTypeString, offsetof(CompareCommodity, system_name), 16 },
   { "Bid", FieldTypeU32, offsetof(CompareCommodity, bid), 6 },
@@ -310,12 +319,15 @@ fn void renderStaticAssetToPixelBuffer(TuiState* tui, u8* asset, u32 len, u16 x,
 }
 
 fn void resetTabRow(Tab tab) {
-  if (state.menu.selected_index == TabStation) {
+  if (state.menu.selected_index == TabMarket) {
     state.row.len = Commodity_Count;
     state.row.selected_index = 0;
   } else if (state.menu.selected_index == TabShip) {
     state.ship_tab_states = ShipTabStateMain;
     state.row.len = 2;
+    state.row.selected_index = 0;
+  } else if (state.menu.selected_index == TabPassengers) {
+    state.row.len = 0;// TODO the number of available passenger missions
     state.row.selected_index = 0;
   }
 }
@@ -350,6 +362,17 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     case MessageBadPw: {/*nothing to parse but the type*/} break;
     case MessageGameOver: {
       parsed.byte = message[msg_pos++];
+    } break;
+    case MessageSystemPassengers: {
+      parsed.byte = message[msg_pos++];
+      u32 i = 0;
+      while (msg_pos < len) {
+        parsed.offers[i].goal_system_idx = message[msg_pos++];
+        parsed.offers[i].people = message[msg_pos++];
+        parsed.offers[i].time_limit = message[msg_pos++];
+        parsed.offers[i].offer = readU32FromBufferLE(message + msg_pos);
+        msg_pos += 4;
+      }
     } break;
     case MessageTransactionResult: {
       parsed.tx_result.buying = message[msg_pos++];
@@ -454,6 +477,23 @@ fn i32 compareCompareCommodity(const void *a, const void *b) {
   return ((CompareCommodity*)b)->bid - ((CompareCommodity*)a)->bid;
 }
 
+fn void drawStatusLine(TuiState* tui, ptr sbuf, PlayerShip* me, u32 x, u32 y) {
+  MemoryZero(sbuf, SBUFLEN);
+  sprintf(sbuf, " $%d ", me->credits);
+  Range1u32 range = {
+    .min = XYToPos(x, y, tui->screen_dimensions.width),
+    .max = XYToPos(x+strlen(sbuf), y, tui->screen_dimensions.width),
+  };
+  colorizeRange(tui, range, ANSI_HIGHLIGHT_YELLOW, ANSI_BLACK);
+  renderStrToBuffer(tui->frame_buffer, x, y, sbuf, tui->screen_dimensions);
+  MemoryZero(sbuf, SBUFLEN);
+  sprintf(sbuf, " %d / %d cargo ", usedVacuumCargoSlots(*me), me->vacuum_cargo_slots);
+  range.min = range.max;
+  range.max = range.min+strlen(sbuf);
+  colorizeRange(tui, range, ANSI_DULL_BLUE, ANSI_WHITE);
+  renderStrToBuffer(tui->frame_buffer, range.min % tui->screen_dimensions.width, y, sbuf, tui->screen_dimensions);
+}
+
 fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count) {
   GameState* state = (GameState*) s;
   state->loop_count = loop_count;
@@ -476,6 +516,10 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   while (next_net_msg != NULL) {
     msg_iters += 0;
     switch (msg.type) {
+      case MessageSystemPassengers: {
+       // put the stuff from msg into the correct state.map[i]
+       MemoryCopy(&state->map[msg.byte].offers, &msg.offers, sizeof(PassengerJobOffer) * MAX_PASSENGER_JOB_OFFERS);
+      } break;
       case MessageGameOver: {
         state->screen = state->me.id == msg.byte ? ScreenVictory : ScreenDefeat;
         sprintf(sbuf,"got winner id: %d", msg.byte);
@@ -492,7 +536,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         state->turn_tick_started_on = loop_count;
       } break;
       case MessageTransactionResult: {
-        state->station_tab_state = StationTabStateResult;
+        state->market_tab_state = MarketTabStateResult;
         MemoryCopyStruct(&state->tx_result, &msg.tx_result);
       } break;
       case MessagePlayerDetails: {
@@ -1026,32 +1070,20 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             renderStrToBuffer(tui->frame_buffer, modal_outline.x+2, y_off, "Loading...", screen_dimensions);
           }
         } break;
-        case TabStation: {
+        case TabMarket: {
           if (input_buffer[0] == 'q' || user_pressed_esc) {
-            if (state->station_tab_state == StationTabStateTable) {
+            if (state->market_tab_state == MarketTabStateTable) {
               should_quit = true;
             } else {
-              state->station_tab_state = StationTabStateTable;
+              state->market_tab_state = MarketTabStateTable;
             }
           }
 
           u32 line = box.y + 1;
 
           // draw a nifty status-line
-          MemoryZero(sbuf, SBUFLEN);
-          sprintf(sbuf, " $: %d ", state->me.credits);
-          Range1u32 range = {
-            .min = XYToPos(box.x+2, line, screen_dimensions.width),
-            .max = XYToPos(box.x+2+strlen(sbuf), line, screen_dimensions.width),
-          };
-          colorizeRange(tui, range, ANSI_HIGHLIGHT_YELLOW, ANSI_BLACK);
-          renderStrToBuffer(tui->frame_buffer, box.x+2, line, sbuf, screen_dimensions);
-          MemoryZero(sbuf, SBUFLEN);
-          sprintf(sbuf, " %d / %d cargo ", usedVacuumCargoSlots(state->me), state->me.vacuum_cargo_slots);
-          range.min = range.max;
-          range.max = range.min+strlen(sbuf);
-          colorizeRange(tui, range, ANSI_DULL_BLUE, ANSI_WHITE);
-          renderStrToBuffer(tui->frame_buffer, range.min % screen_dimensions.width, line++, sbuf, screen_dimensions);
+          drawStatusLine(tui, sbuf, &state->me, box.x+2, line);
+          line++;
 
           MemoryZero(sbuf, SBUFLEN);
           sprintf(sbuf, "Welcome to %s", curr.name);
@@ -1072,7 +1104,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             .qty = selected_qty,
             .owned = state->me.commodities[c.type],
           };
-          if (state->station_tab_state == StationTabStateComparisonTable) {
+          if (state->market_tab_state == MarketTabStateComparisonTable) {
             info.rows = STAR_SYSTEM_COUNT;
             info.cols = 4;
             CompareCommodity rows[STAR_SYSTEM_COUNT] = { 0 };
@@ -1117,7 +1149,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             .height = 15,
             .width = 50,
           };
-          if (state->station_tab_state != StationTabStateTable && state->station_tab_state != StationTabStateComparisonTable) {
+          if (state->market_tab_state != MarketTabStateTable && state->market_tab_state != MarketTabStateComparisonTable) {
             // draw the modal outline
             clearBox(tui, modal_outline);
             drawAnsiBox(tui->frame_buffer, modal_outline, tui->screen_dimensions, false);
@@ -1127,24 +1159,24 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           u32 y_off = modal_outline.y+2;
           str cname = COMMODITIES[state->row.selected_index].name;
 
-          switch (state->station_tab_state) {
-            case StationTabStateTable: {
+          switch (state->market_tab_state) {
+            case MarketTabStateTable: {
               moveRowUpDown(user_pressed_up, user_pressed_down);
               if (user_pressed_enter) {
-                state->station_tab_state = StationTabStateTransact;
+                state->market_tab_state = MarketTabStateTransact;
                 state->modal_choice.len = 2;
                 state->modal_choice.selected_index = 0;
               } else if (user_pressed_space) {
-                state->station_tab_state = StationTabStateComparisonTable;
+                state->market_tab_state = MarketTabStateComparisonTable;
               }
             } break;
-            case StationTabStateComparisonTable: {
+            case MarketTabStateComparisonTable: {
               if (user_pressed_backspace) {
-                state->station_tab_state = StationTabStateTable;
+                state->market_tab_state = MarketTabStateTable;
               }
               // TODO
             } break;
-            case StationTabStateTransact: {
+            case MarketTabStateTransact: {
               if (user_pressed_right) {
                 state->modal_choice.selected_index = 1;
               } else if (user_pressed_left) {
@@ -1217,10 +1249,10 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 
                 outgoingMessageQueuePush(network_send_queue, &msg);
 
-                state->station_tab_state = StationTabStateLoading;
+                state->market_tab_state = MarketTabStateLoading;
               }
             } break;
-            case StationTabStateResult: {
+            case MarketTabStateResult: {
               if (state->tx_result.buying) {
                 renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-10)/2), y_off++, "Purchased!", screen_dimensions);
               } else {
@@ -1245,15 +1277,48 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               renderStrToBuffer(tui->frame_buffer, exit_x, y_off++, "EXIT", screen_dimensions);
 
               if (user_pressed_enter) {
-                state->station_tab_state = StationTabStateTable;
+                state->market_tab_state = MarketTabStateTable;
               }
             } break;
-            case StationTabStateLoading: {
+            case MarketTabStateLoading: {
               renderStrToBuffer(tui->frame_buffer, modal_outline.x+2, y_off, "Loading...", screen_dimensions);
             } break;
-            case StationTabStates_Count: assert(false && "invalid station_tab_state"); break;
+            case MarketTabStates_Count: assert(false && "invalid market_tab_state"); break;
           }
 
+        } break;
+        case TabPassengers: {
+          u32 line = box.y + 1;
+
+          // draw a nifty status-line
+          drawStatusLine(tui, sbuf, &state->me, box.x+2, line);
+          line++;
+
+          // the table
+          u32 offer_count = 0;
+          DisplayPassengerJobOffer rows[MAX_PASSENGER_JOB_OFFERS] = { 0 };
+          for (u32 i = 0; i < MAX_PASSENGER_JOB_OFFERS; i++) {
+            if (curr.offers[i].people > 0) {
+              offer_count += 1;
+              rows[i].destination = state->map[curr.offers[i].goal_system_idx].name;
+              rows[i].people = curr.offers[i].people;
+              rows[i].time_limit = curr.offers[i].time_limit;
+              rows[i].offer = curr.offers[i].offer;
+            }
+          }
+          TableDrawInfo info = {
+            .x_offset = box.x+2, .y_offset = ++line,
+            .rows = offer_count, .cols = 4,
+          };
+          renderTable(
+            tui,
+            info,
+            state->row.selected_index,
+            PASSENGER_JOB_OFFER_FIELDS,
+            1,
+            rows,
+            sizeof(DisplayPassengerJobOffer)
+          );
         } break;
         case Tab_Count: {} break;
       }
@@ -1431,7 +1496,19 @@ i32 main(i32 argc, ptr argv[]) {
     printf("bad network startup");
     exit(1);
   }
-  state.client = createUDPClient(7777, argc > 1 ? argv[1] : NULL);
+  ptr server_address = NULL;
+  if (argc > 1) {
+    server_address = argv[1];
+  } else {
+    printf("Server IP Address: ");
+    char input_string[16] = { 0 };
+    scanf("%15s", input_string);
+    printf("%s", input_string);
+    if (input_string[0] && input_string[1] && input_string[2] && input_string[3]) {
+      server_address = input_string;
+    }
+  }
+  state.client = createUDPClient(7777, server_address);
 
   // "hardcoded" keep alive message to periodically send to server
   state.keep_alive_msg.address = state.client.server_address;

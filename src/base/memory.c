@@ -40,6 +40,12 @@ fn void* arenaAlloc(Arena* arena, u64 size) {
   return memory;
 }
 
+fn void* arenaAllocZero(Arena* a, u64 size) {
+  void* result = arenaAlloc(a, size);
+  MemoryZero(result, size);
+  return result;
+}
+
 fn void* arenaAllocArraySized(Arena* arena, u64 elem_size, u64 count) {
     return arenaAlloc(arena, elem_size * count);
 }

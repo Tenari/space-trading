@@ -37,6 +37,8 @@
 typedef struct ParsedClientCommand {
   CommandType type;
   u8 byte;
+  u8 people;
+  u8 time_limit;
   u16 sender_port;
   u16 alt_port;
   u32 sender_ip;
@@ -235,6 +237,23 @@ fn u32 starSystemPlanetCount(StarSystem* sys) {
   return planet_count;
 }
 
+fn UDPMessage makeMessageSystemPassengers(StarSystem* sys) {
+  UDPMessage outgoing_message = {0};
+  u32 msg_i = 0;
+  outgoing_message.bytes[msg_i++] = (u8)MessageSystemPassengers;
+  outgoing_message.bytes[msg_i++] = (u8)sys->idx;
+  for (u32 i = 0; i < MAX_PASSENGER_JOB_OFFERS; i++) {
+    if (sys->offers[i].people) {
+      outgoing_message.bytes[msg_i++] = sys->offers[i].goal_system_idx;
+      outgoing_message.bytes[msg_i++] = sys->offers[i].people;
+      outgoing_message.bytes[msg_i++] = sys->offers[i].time_limit;
+      msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, sys->offers[i].offer);
+    }
+  }
+  outgoing_message.bytes_len = msg_i;
+  return outgoing_message;
+}
+
 fn UDPMessage makeMessageSystemCommodities(StarSystem* sys) {
   UDPMessage outgoing_message = {0};
   u32 planet_count = starSystemPlanetCount(sys);
@@ -395,6 +414,13 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       printf("command create character received\n");
       parsed.byte = message[1];
     } break;
+    case CommandAcceptPassengerJob: {
+      printf("command accept passenger job received\n");
+      parsed.byte = message[1];
+      parsed.people = message[2];
+      parsed.time_limit = message[3];
+      parsed.qty = readU32FromBufferLE(message + 4);
+    } break;
     case CommandInvalid:
     case CommandType_Count: {
       dbg("invalid command type");
@@ -443,6 +469,13 @@ fn void* sendNetworkUpdates(void* sock) {
       .items = sys_udp_msg.bytes,
       .length = sys_udp_msg.bytes_len,
     };
+    UDPMessage sys_pass_udp_msg = { 0 };
+    sys_pass_udp_msg = makeMessageSystemPassengers(&state.map[send_loop % STAR_SYSTEM_COUNT]);
+    u8List sys_pass_msg = {
+      .capacity = UDP_MAX_MESSAGE_LEN,
+      .items = sys_pass_udp_msg.bytes,
+      .length = sys_pass_udp_msg.bytes_len,
+    };
     lockMutex(&state.client_mutex); {
       // WARNING the `i` starts at 1 here because state.clients.items[0] is a "null" Client
       for (u32 i = 1; i < state.clients.length; i++) {
@@ -455,6 +488,8 @@ fn void* sendNetworkUpdates(void* sock) {
         // every "send-frame" we send each connnected client the current prices for a different system
         // so that the prices mostly stay up to date pretty quickly without having to track changes
         sendUDPu8List(socket, &client.address, &sys_msg);
+        // and the passenger offers
+        sendUDPu8List(socket, &client.address, &sys_pass_msg);
 
         // update all the changed systems
         UDPMessage msg_data;
@@ -549,6 +584,37 @@ fn void* gameLoop(void* params) {
         u32 client_handle = findClientHandleBySocketAddress(&state.clients, sender);
         Client* client = &state.clients.items[client_handle];
         switch (msg.type) {
+          case CommandAcceptPassengerJob: {
+            // move the offer out of the system and INTO the PlayerShip
+            Account* account = &state.accounts[client->account_id];
+            StarSystem* player_sys = &state.map[account->ship.system_idx];
+            PassengerJobOffer pjo = {
+              .goal_system_idx = msg.byte,
+              .people = msg.people,
+              .time_limit = msg.time_limit,
+              .offer = msg.qty,
+            };
+            // find the matching job, and IF the ship has room,
+            // "accept" it by clearing it from the system list and adding it to the ship
+            for (u32 i = 0; i < MAX_PASSENGER_JOB_OFFERS; i++) {
+              if (passengerJobEq(player_sys->offers[i], pjo)) {
+                if (shipAvailablePassengerBerths(account->ship) > 0) {
+                  for (u32 ii = 0; ii < MAX_PASSENGER_BERTHS; ii++) {
+                    if (account->ship.passengers[ii].people == 0) {
+                      account->ship.passengers[ii].people = pjo.people;
+                      account->ship.passengers[ii].goal_system_idx = pjo.goal_system_idx;
+                      account->ship.passengers[ii].turns_remaining = pjo.time_limit;
+                      account->ship.passengers[ii].reward = pjo.offer;
+                      MemoryZero(&player_sys->offers[i], sizeof(PassengerJobOffer));
+                      ii = MAX_PASSENGER_BERTHS;
+                      i = MAX_PASSENGER_JOB_OFFERS;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          } break;
           case CommandPayMortgage: {
             Account* account = &state.accounts[client->account_id];
             u32 amount_to_pay = msg.id;
@@ -819,6 +885,7 @@ fn void* gameLoop(void* params) {
       for (u32 i = sys_range.min; i < sys_range.max; i++) {
         sys = &state.map[i];
         sys->changed = true;
+        // consume and produce commodities
         for (u32 ii = 0; ii < Commodity_Count; ii++) {
           for (u32 iii = 0; iii < MAX_PLANETS; iii++) {
             if (sys->planets[iii].type != PlanetTypeNull) {
@@ -829,6 +896,22 @@ fn void* gameLoop(void* params) {
               }
               sys->planets[iii].commodities[ii] += sys->planets[iii].production[ii];
             }
+          }
+        }
+        // potentially create a new passenger job
+        u32 planet_divisor = ((MAX_PLANETS - starSystemPlanetCount(sys))+1);
+        u32 max_passenger_job_count = 1 + ((MAX_PASSENGER_JOB_OFFERS-1) / planet_divisor);
+        for (u32 ii = 0; ii < max_passenger_job_count; ii++) {
+          if (sys->offers[ii].people == 0) {
+            // TODO choose a system further away
+            sys->offers[ii].goal_system_idx = (i+(rand() % 6)) % STAR_SYSTEM_COUNT;
+            sys->offers[ii].people = 1 + (rand() % (MAX_PASSENGER_JOB_PEOPLE - 1));
+            sys->offers[ii].time_limit = 3 + (rand() % 5);
+            // TODO compute based on distance between people and time_limit
+            sys->offers[ii].offer = 1000 + (rand() % MAX_PASSENGER_JOB_PRICE);
+            break;
+          } else { //increase the offer amount each turn
+            sys->offers[ii].offer = (u32)((f32)sys->offers[ii].offer * 1.05);
           }
         }
       }
@@ -953,7 +1036,7 @@ i32 main(i32 argc, ptr argv[]) {
     }
   }
 
-  // now, build out the commodity info for the systems
+  // now, build out the commodity info and passenger jobs for the systems
   for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
     u32 planet_count = rand() % MAX_PLANETS + 1;
     for (u32 ii = 0; ii < planet_count; ii++) {
@@ -1054,6 +1137,17 @@ i32 main(i32 argc, ptr argv[]) {
         case PlanetType_Count:
           break;
       }
+    }
+
+    u32 planet_divisor = ((MAX_PLANETS - planet_count)+1);
+    u32 offer_count = 1 + (rand() % (MAX_PASSENGER_JOB_OFFERS / planet_divisor));
+    for (u32 ii = 0; ii < offer_count; ii++) {
+      // TODO choose a system further away
+      state.map[i].offers[ii].goal_system_idx = (i+(rand() % 6)) % STAR_SYSTEM_COUNT;
+      state.map[i].offers[ii].people = 1 + (rand() % (MAX_PASSENGER_JOB_PEOPLE - 1));
+      state.map[i].offers[ii].time_limit = 3 + (rand() % 5);
+      // TODO compute based on distance between people and time_limit
+      state.map[i].offers[ii].offer = 1000 + (rand() % MAX_PASSENGER_JOB_PRICE);
     }
   }
 
