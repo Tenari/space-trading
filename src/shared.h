@@ -277,8 +277,8 @@ global FieldDescriptor MARKET_COMMODITY_FIELDS[Commodity_Count] = {
 };
 
 typedef struct Passenger {
-  u8 people;
   u8 goal_system_idx;
+  u8 people;
   u8 turns_remaining;
   u32 reward;
 } Passenger;
@@ -294,9 +294,9 @@ typedef struct DisplayPassengerJobOffer {
   str destination;
   u8 people;
   u8 time_limit;
+  u8 goal_system_idx;
   u32 offer;
 } DisplayPassengerJobOffer;
-
 
 global FieldDescriptor PASSENGER_JOB_OFFER_FIELDS[] = {
   { "Destination", FieldTypeString, offsetof(DisplayPassengerJobOffer, destination), 44 },
@@ -445,6 +445,7 @@ typedef enum Message {
   MessageGameOver,
   MessagePayoffResult,
   MessageSystemPassengers,
+  MessageJobAcceptResult,
   Message_Count,
 } Message;
 
@@ -461,6 +462,7 @@ static const char* MESSAGE_STRINGS[] = {
   "GameOver",
   "PayoffResult",
   "SystemPassengers",
+  "JobAcceptResult",
 };
 
 ///// shared helper functions
@@ -517,7 +519,17 @@ fn bool passengerJobEq(PassengerJobOffer a, PassengerJobOffer b) {
     a.time_limit == b.time_limit;
 }
 
-fn bool shipAvailablePassengerBerths(PlayerShip ship) {
+fn u32 shipTotalPassengers(PlayerShip ship) {
+  u32 count = 0;
+  for (u32 i = 0; i < MAX_PASSENGER_BERTHS; i++) {
+    if (ship.passengers[i].people > 0) {
+      count += ship.passengers[i].people;
+    }
+  }
+  return count;
+}
+
+fn u32 shipUsedPassengerBerths(PlayerShip ship) {
   u32 used = 0;
   for (u32 i = 0; i < MAX_PASSENGER_BERTHS; i++) {
     if (ship.passengers[i].people > 0) {
@@ -525,7 +537,11 @@ fn bool shipAvailablePassengerBerths(PlayerShip ship) {
     }
   }
   assert(used <= ship.passenger_berths);
-  return ship.passenger_berths - used;
+  return used;
+}
+
+fn u32 shipAvailablePassengerBerths(PlayerShip ship) {
+  return (u32)ship.passenger_berths - shipUsedPassengerBerths(ship);
 }
 
 #endif //GAMESHARED_H

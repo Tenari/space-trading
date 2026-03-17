@@ -305,8 +305,25 @@ fn UDPMessage makeMessagePlayerDetails(PlayerShip ship) {
   for (u32 i = 0; i < Commodity_Count; i++) {
     msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, ship.commodities[i]);
   }
+  for (u32 i = 0; i < MAX_PASSENGER_BERTHS; i++) {
+    outgoing_message.bytes[msg_i++] = ship.passengers[i].goal_system_idx;
+    outgoing_message.bytes[msg_i++] = ship.passengers[i].people;
+    outgoing_message.bytes[msg_i++] = ship.passengers[i].turns_remaining;
+    msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, ship.passengers[i].reward);
+  }
   outgoing_message.bytes_len = msg_i;
   return outgoing_message;
+}
+
+fn void sendMessageJobAcceptResult(SocketAddress addr, bool result) {
+  UDPMessage outgoing_message = {0};
+  outgoing_message.address = addr;
+  u32 msg_i = 0;
+  outgoing_message.bytes[msg_i++] = (u8)MessageJobAcceptResult;
+  outgoing_message.bytes[msg_i++] = result;
+  outgoing_message.bytes_len = msg_i;
+  outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+  printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
 }
 
 fn void sendMessagePayoffResult(SocketAddress addr) {
@@ -463,14 +480,14 @@ fn void* sendNetworkUpdates(void* sock) {
     }
 
     UDPMessage sys_udp_msg = { 0 };
-    sys_udp_msg = makeMessageSystemCommodities(&state.map[send_loop % STAR_SYSTEM_COUNT]);
+    sys_udp_msg = makeMessageSystemCommodities(&state.map[send_loop/2 % STAR_SYSTEM_COUNT]);
     u8List sys_msg = {
       .capacity = UDP_MAX_MESSAGE_LEN,
       .items = sys_udp_msg.bytes,
       .length = sys_udp_msg.bytes_len,
     };
     UDPMessage sys_pass_udp_msg = { 0 };
-    sys_pass_udp_msg = makeMessageSystemPassengers(&state.map[send_loop % STAR_SYSTEM_COUNT]);
+    sys_pass_udp_msg = makeMessageSystemPassengers(&state.map[send_loop/2 % STAR_SYSTEM_COUNT]);
     u8List sys_pass_msg = {
       .capacity = UDP_MAX_MESSAGE_LEN,
       .items = sys_pass_udp_msg.bytes,
@@ -485,22 +502,33 @@ fn void* sendNetworkUpdates(void* sock) {
           continue;
         }
 
-        // every "send-frame" we send each connnected client the current prices for a different system
-        // so that the prices mostly stay up to date pretty quickly without having to track changes
-        sendUDPu8List(socket, &client.address, &sys_msg);
-        // and the passenger offers
-        sendUDPu8List(socket, &client.address, &sys_pass_msg);
+        if (send_loop % 2 == 0) {
+          // every other "send-frame" we send each connnected client the current prices for a different system
+          // so that the prices mostly stay up to date pretty quickly without having to track changes
+          sendUDPu8List(socket, &client.address, &sys_msg);
+          // and the passenger offers
+          sendUDPu8List(socket, &client.address, &sys_pass_msg);
+        }
 
         // update all the changed systems
         UDPMessage msg_data;
         for (u32 ii = 0; ii < STAR_SYSTEM_COUNT; ii++) {
           if (state.map[ii].changed == true) {
+            // send commodities
             msg_data = makeMessageSystemCommodities(&state.map[ii]);
             u8List msg = {
               .capacity = UDP_MAX_MESSAGE_LEN,
               .items = msg_data.bytes,
               .length = msg_data.bytes_len,
             };
+            sendUDPu8List(socket, &client.address, &msg);
+
+            // send passenger jobs
+            printf("sending passenger jobs for %s\n", STAR_NAMES[ii]);
+            msg_data = makeMessageSystemPassengers(&state.map[ii]);
+            msg.capacity = UDP_MAX_MESSAGE_LEN;
+            msg.items = msg_data.bytes;
+            msg.length = msg_data.bytes_len;
             sendUDPu8List(socket, &client.address, &msg);
           }
         }
@@ -596,6 +624,7 @@ fn void* gameLoop(void* params) {
             };
             // find the matching job, and IF the ship has room,
             // "accept" it by clearing it from the system list and adding it to the ship
+            bool succeeded = false;
             for (u32 i = 0; i < MAX_PASSENGER_JOB_OFFERS; i++) {
               if (passengerJobEq(player_sys->offers[i], pjo)) {
                 if (shipAvailablePassengerBerths(account->ship) > 0) {
@@ -605,7 +634,12 @@ fn void* gameLoop(void* params) {
                       account->ship.passengers[ii].goal_system_idx = pjo.goal_system_idx;
                       account->ship.passengers[ii].turns_remaining = pjo.time_limit;
                       account->ship.passengers[ii].reward = pjo.offer;
+                      account->changed = true;
                       MemoryZero(&player_sys->offers[i], sizeof(PassengerJobOffer));
+                      player_sys->changed = true;
+                      succeeded = true;
+                      sendMessageJobAcceptResult(sender, succeeded);
+                      // end both for loops "break break;"
                       ii = MAX_PASSENGER_BERTHS;
                       i = MAX_PASSENGER_JOB_OFFERS;
                       break;
@@ -613,6 +647,9 @@ fn void* gameLoop(void* params) {
                   }
                 }
               }
+            }
+            if (!succeeded) {
+              sendMessageJobAcceptResult(sender, succeeded);
             }
           } break;
           case CommandPayMortgage: {
@@ -879,6 +916,7 @@ fn void* gameLoop(void* params) {
 
     // 2. tick non-user entities
     if (state.all_accounts_ready) {
+      printf("NEW TURN: ticking all_accounts_ready\n");
       // tick all the star systems
       StarSystem* sys = NULL;
       Range1u64 sys_range = LaneRange(STAR_SYSTEM_COUNT);

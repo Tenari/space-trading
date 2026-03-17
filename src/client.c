@@ -30,7 +30,7 @@
 ///// TYPES
 typedef enum Tab {
   TabDebug,
-  TabChat,
+//  TabChat,
   TabMap,
   TabShip,
   TabMarket,
@@ -160,6 +160,8 @@ typedef struct GameState {
   u8 destination_sys_idx;
   MarketTabStates market_tab_state;
   ShipTabStates ship_tab_states;
+  PassengersTabStates passenger_tab_state;
+  bool passenger_job_accepted;
   TransactionResult tx_result;
   u64 turn_tick_started_on;
 } GameState;
@@ -173,7 +175,7 @@ global u8 system_message_index = 0;
 global GameState state = {0};
 global OutgoingMessageQueue* network_send_queue = {0};
 global ParsedServerMessageThreadQueue* network_recv_queue = {0};
-global str TAB_STRS[Tab_Count] = {"Debug", "Chat", "Map", "Ship", "Market", "Passengers"};
+global str TAB_STRS[Tab_Count] = {"Debug", /*"Chat",*/ "Map", "Ship", "Market", "Passengers"};
 global FieldDescriptor COMPARE_COMMODITY_FIELDS[STAR_SYSTEM_COUNT] = {
   { "System", FieldTypeString, offsetof(CompareCommodity, system_name), 16 },
   { "Bid", FieldTypeU32, offsetof(CompareCommodity, bid), 6 },
@@ -322,13 +324,24 @@ fn void resetTabRow(Tab tab) {
   if (state.menu.selected_index == TabMarket) {
     state.row.len = Commodity_Count;
     state.row.selected_index = 0;
+    state.modal_choice.selected_index = 0;
+    state.modal_choice.len = 2;
   } else if (state.menu.selected_index == TabShip) {
     state.ship_tab_states = ShipTabStateMain;
     state.row.len = 2;
     state.row.selected_index = 0;
   } else if (state.menu.selected_index == TabPassengers) {
-    state.row.len = 0;// TODO the number of available passenger missions
+    StarSystem s = state.map[state.me.system_idx];
+    u32 offer_count = 0;
+    for (u32 i = 0; i < MAX_PASSENGER_JOB_OFFERS; i++) {
+      if (s.offers[i].people > 0) {
+        offer_count += 1;
+      }
+    }
+    state.row.len = offer_count;
     state.row.selected_index = 0;
+    state.modal_choice.selected_index = 0;
+    state.modal_choice.len = 2;
   }
 }
 
@@ -365,14 +378,20 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     } break;
     case MessageSystemPassengers: {
       parsed.byte = message[msg_pos++];
-      u32 i = 0;
-      while (msg_pos < len) {
+      u32 i;
+      for (i = 0; msg_pos < len; i++) {
         parsed.offers[i].goal_system_idx = message[msg_pos++];
         parsed.offers[i].people = message[msg_pos++];
         parsed.offers[i].time_limit = message[msg_pos++];
         parsed.offers[i].offer = readU32FromBufferLE(message + msg_pos);
         msg_pos += 4;
       }
+      u8 buf[128] = {0};
+      sprintf((ptr)buf, "Got %d passenger jobs for %s", i, STAR_NAMES[parsed.byte]);
+      addSystemMessage(buf);
+    } break;
+    case MessageJobAcceptResult: {
+      parsed.byte = message[msg_pos++]; // boolean success/fail
     } break;
     case MessageTransactionResult: {
       parsed.tx_result.buying = message[msg_pos++];
@@ -392,7 +411,6 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       }
     } break;
     case MessageSystemCommodities: {
-      addSystemMessage((u8*)"Got prices ");
       parsed.id = (u64)message[msg_pos++];
       u32 planet_count = message[msg_pos++];
       for (u32 i = 0; i < planet_count; i++) {
@@ -431,6 +449,13 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       msg_pos += 8;
       for (u32 i = 0; i < Commodity_Count; i++, msg_pos += 4) {
         parsed.ship.commodities[i] = readU32FromBufferLE(message + msg_pos);
+      }
+      for (u32 i = 0; i < MAX_PASSENGER_BERTHS; i++) {
+        parsed.ship.passengers[i].goal_system_idx = message[msg_pos++];
+        parsed.ship.passengers[i].people = message[msg_pos++];
+        parsed.ship.passengers[i].turns_remaining = message[msg_pos++];
+        parsed.ship.passengers[i].reward = readU32FromBufferLE(message + msg_pos);
+        msg_pos += 4;
       }
     } break;
     case MessageCharacterId: {
@@ -486,12 +511,30 @@ fn void drawStatusLine(TuiState* tui, ptr sbuf, PlayerShip* me, u32 x, u32 y) {
   };
   colorizeRange(tui, range, ANSI_HIGHLIGHT_YELLOW, ANSI_BLACK);
   renderStrToBuffer(tui->frame_buffer, x, y, sbuf, tui->screen_dimensions);
+
   MemoryZero(sbuf, SBUFLEN);
   sprintf(sbuf, " %d / %d cargo ", usedVacuumCargoSlots(*me), me->vacuum_cargo_slots);
   range.min = range.max;
   range.max = range.min+strlen(sbuf);
   colorizeRange(tui, range, ANSI_DULL_BLUE, ANSI_WHITE);
   renderStrToBuffer(tui->frame_buffer, range.min % tui->screen_dimensions.width, y, sbuf, tui->screen_dimensions);
+
+  MemoryZero(sbuf, SBUFLEN);
+  sprintf(sbuf, " %d / %d berths ", shipUsedPassengerBerths(*me), me->passenger_berths);
+  range.min = range.max;
+  range.max = range.min+strlen(sbuf);
+  colorizeRange(tui, range, ANSI_DARK_GREEN, ANSI_WHITE);
+  renderStrToBuffer(tui->frame_buffer, range.min % tui->screen_dimensions.width, y, sbuf, tui->screen_dimensions);
+}
+
+fn Box defaultModal(TuiState* tui) {
+  Box modal_outline = {
+    .x = (tui->screen_dimensions.width - 50) / 2,
+    .y = (tui->screen_dimensions.height - 15) / 2,
+    .height = 15,
+    .width = 50,
+  };
+  return modal_outline;
 }
 
 fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count) {
@@ -524,6 +567,10 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         state->screen = state->me.id == msg.byte ? ScreenVictory : ScreenDefeat;
         sprintf(sbuf,"got winner id: %d", msg.byte);
         addSystemMessage((u8*)sbuf);
+      } break;
+      case MessageJobAcceptResult: {
+        state->passenger_tab_state = PassengersTabStateResult;
+        state->passenger_job_accepted = msg.byte;
       } break;
       case MessagePayoffResult: {
         state->ship_tab_states = ShipTabStateMain;
@@ -561,6 +608,9 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           state->me.credits = msg.ship.credits;
           for (u32 i = 0; i < Commodity_Count; i++) {
             state->me.commodities[i] = msg.ship.commodities[i];
+          }
+          for (u32 i = 0; i < MAX_PASSENGER_BERTHS; i++) {
+            state->me.passengers[i] = msg.ship.passengers[i];
           }
         }
       } break;
@@ -773,9 +823,9 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
           renderSystemMessages(tui->frame_buffer, tui->screen_dimensions, box);
         } break;
-        case TabChat: {
+        /*case TabChat: {
           renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "You haven't heard anything interesting lately...", screen_dimensions);
-        } break;
+        } break;*/
         case TabMap: {
           if (input_buffer[0] == 'q' || user_pressed_esc) {
             should_quit = true;
@@ -879,7 +929,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           Pos2 dest_pos = {dest.x, dest.y};
           Pos2 curr_pos = {curr.x, curr.y};
           u32 projected_fuel_cost = fuelCostForTravel(state->me.drive_efficiency, curr_pos, dest_pos);
-          bool have_enough_fuel = projected_fuel_cost < state->me.commodities[CommodityHydrogenFuel];
+          bool have_enough_fuel = projected_fuel_cost <= state->me.commodities[CommodityHydrogenFuel];
           MemoryZero(sbuf, SBUFLEN);
           if (have_enough_fuel) {
             sprintf(
@@ -996,18 +1046,19 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
           renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
 
+          u32 used_berths = shipUsedPassengerBerths(state->me);
+          u32 passenger_count = shipTotalPassengers(state->me);
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "Passengers: %d filling %d / %d berths", passenger_count, used_berths, state->me.passenger_berths);
+          renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+
           for (u32 i = 0; i < Commodity_Count; i++) {
             MemoryZero(sbuf, SBUFLEN);
             sprintf(sbuf, "%-42s %d", COMMODITIES[i].name, state->me.commodities[i]);
-            renderStrToBuffer(tui->frame_buffer, box.x+4, yoff+4+i, sbuf, screen_dimensions);
+            renderStrToBuffer(tui->frame_buffer, box.x+4, yoff+3+i, sbuf, screen_dimensions);
           }
 
-          Box modal_outline = {
-            .x = (tui->screen_dimensions.width - 50) / 2,
-            .y = (tui->screen_dimensions.height - 15) / 2,
-            .height = 15,
-            .width = 50,
-          };
+          Box modal_outline = defaultModal(tui);
           u32 y_off = modal_outline.y+2;
           if (state->ship_tab_states == ShipTabStatePayoffModal) {
             if (input_buffer[0] == 'q' || user_pressed_esc) {
@@ -1143,12 +1194,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
 
           // calculate and maybe draw the modal outline
-          Box modal_outline = {
-            .x = (tui->screen_dimensions.width - 50) / 2,
-            .y = (tui->screen_dimensions.height - 15) / 2,
-            .height = 15,
-            .width = 50,
-          };
+          Box modal_outline = defaultModal(tui);
           if (state->market_tab_state != MarketTabStateTable && state->market_tab_state != MarketTabStateComparisonTable) {
             // draw the modal outline
             clearBox(tui, modal_outline);
@@ -1288,6 +1334,14 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 
         } break;
         case TabPassengers: {
+          if (input_buffer[0] == 'q' || user_pressed_esc) {
+            if (state->passenger_tab_state == PassengersTabStateTable) {
+              should_quit = true;
+            } else {
+              state->passenger_tab_state = PassengersTabStateTable;
+            }
+          }
+
           u32 line = box.y + 1;
 
           // draw a nifty status-line
@@ -1301,6 +1355,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             if (curr.offers[i].people > 0) {
               offer_count += 1;
               rows[i].destination = state->map[curr.offers[i].goal_system_idx].name;
+              rows[i].goal_system_idx = curr.offers[i].goal_system_idx;
               rows[i].people = curr.offers[i].people;
               rows[i].time_limit = curr.offers[i].time_limit;
               rows[i].offer = curr.offers[i].offer;
@@ -1319,6 +1374,111 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             rows,
             sizeof(DisplayPassengerJobOffer)
           );
+
+          // calculate and maybe draw the modal outline
+          Box modal_outline = defaultModal(tui);
+          if (state->passenger_tab_state != PassengersTabStateTable) {
+            // draw the modal outline
+            clearBox(tui, modal_outline);
+            drawAnsiBox(tui->frame_buffer, modal_outline, tui->screen_dimensions, false);
+          }
+          // common/shared variables
+          u32 y_off = modal_outline.y+2;
+
+          switch (state->passenger_tab_state) {
+            case PassengersTabStateBookModal: {
+              if (user_pressed_right) {
+                state->modal_choice.selected_index = 1;
+              } else if (user_pressed_left) {
+                state->modal_choice.selected_index = 0;
+              } else if (user_pressed_backspace || user_pressed_esc) {
+                state->passenger_tab_state = PassengersTabStateTable;
+              }
+
+              // draw the interior of the modal
+              DisplayPassengerJobOffer current_row = rows[state->row.selected_index];
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%d passengers to %s", current_row.people, current_row.destination);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+(modal_outline.width/2)-strlen(sbuf), y_off++, sbuf, screen_dimensions);
+
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-8)/2), y_off++, "offering", screen_dimensions);
+
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%d credits", current_row.offer);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
+
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-18)/2), y_off++, "if accomplished in", screen_dimensions);
+
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%d turns", current_row.time_limit);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
+
+              y_off++;
+
+              bool accepting = state->modal_choice.selected_index == 1;
+              u32 reject_x = modal_outline.x+5;
+              u32 accept_x = modal_outline.x+modal_outline.width-10;
+              renderStrToBuffer(tui->frame_buffer, reject_x, y_off, "Reject", screen_dimensions);
+              renderStrToBuffer(tui->frame_buffer, accept_x, y_off, "ACCEPT", screen_dimensions);
+              u32 pos = XYToPos(reject_x, y_off, tui->screen_dimensions.width);
+              if (accepting) {
+                pos = XYToPos(accept_x, y_off, tui->screen_dimensions.width);
+              }
+              for (u32 i = 0; i < 6; i++) {
+                tui->frame_buffer[pos+i].background = ANSI_WHITE;
+                tui->frame_buffer[pos+i].foreground = ANSI_BLACK;
+              }
+              tui->cursor.x = (accepting ? accept_x : reject_x);
+              tui->cursor.y = y_off++;
+
+              if (user_pressed_enter) {
+                if (accepting) {
+                  // send the "job accept" message to server
+                  // get back new "status" of things
+                  u32 msg_idx = 0;
+                  UDPMessage msg = {0};
+                  msg.address = udp->server_address;
+                  msg.bytes[msg_idx++] = CommandAcceptPassengerJob;
+                  msg.bytes[msg_idx++] = current_row.goal_system_idx;
+                  msg.bytes[msg_idx++] = current_row.people;
+                  msg.bytes[msg_idx++] = current_row.time_limit;
+                  msg_idx += writeU32ToBufferLE(msg.bytes + msg_idx, current_row.offer);
+                  msg.bytes_len = msg_idx;
+                  outgoingMessageQueuePush(network_send_queue, &msg);
+
+                  state->passenger_tab_state = PassengersTabStateLoading;
+                } else {
+                  state->passenger_tab_state = PassengersTabStateTable;
+                }
+              }
+            } break;
+            case PassengersTabStateLoading: {
+              if (user_pressed_backspace || user_pressed_esc) {
+                state->passenger_tab_state = PassengersTabStateTable;
+              }
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+4, modal_outline.y+3, "Loading...", screen_dimensions);
+            } break;
+            case PassengersTabStateResult: {
+              if (user_pressed_backspace || user_pressed_esc || user_pressed_enter) {
+                state->passenger_tab_state = PassengersTabStateTable;
+              }
+              if (state->passenger_job_accepted) {
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+4, modal_outline.y+3, "Job Accepted!", screen_dimensions);
+              } else {
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+4, modal_outline.y+3, "Job no longer available...", screen_dimensions);
+                renderStrToBuffer(tui->frame_buffer, modal_outline.x+4, modal_outline.y+4, "or you ran out of passenger berths", screen_dimensions);
+              }
+            } break;
+            case PassengersTabStateTable: {
+              moveRowUpDown(user_pressed_up, user_pressed_down);
+              if (user_pressed_enter) {
+                state->passenger_tab_state = PassengersTabStateBookModal;
+                state->modal_choice.len = 2;
+                state->modal_choice.selected_index = 0;
+              }
+            } break;
+            case PassengersTabStates_Count: assert(false && "passenger_tab_state is corrupted"); break;
+          }
         } break;
         case Tab_Count: {} break;
       }
