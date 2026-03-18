@@ -6,8 +6,8 @@
 
 ///// #define some game-tunable constants
 #define STARTING_DOWN_PAYMENT (10000)
-#define SHIP_DETAIL_COUNT (7)
-#define STAR_SYSTEM_COUNT (40)
+#define SHIP_DETAIL_COUNT (8)
+#define STAR_SYSTEM_COUNT (16)
 #define MAP_WIDTH (36)
 #define MAP_HEIGHT (12)
 #define MAX_PLANETS (3)
@@ -79,12 +79,12 @@ global ShipTemplate SHIPS[] = {
 global FieldDescriptor SHIP_FIELDS[SHIP_DETAIL_COUNT] = {
   { "Type", FieldTypeEnum, offsetof(ShipTemplate, type), 16, (str*)&SHIP_TYPE_STRINGS },
   { "Cost", FieldTypeU32, offsetof(ShipTemplate, base_cost), 8 },
+  { "Cargo", FieldTypeU16, offsetof(ShipTemplate, vacuum_cargo_slots), 7 },
+  { "PassengerBerths", FieldTypeU16, offsetof(ShipTemplate, passenger_berths), 16 },
   { "DriveEff", FieldTypeU8, offsetof(ShipTemplate, drive_efficiency), 8 },
   { "LifeSupp", FieldTypeU8, offsetof(ShipTemplate, life_support_efficiency), 8 },
-  { "Cargo", FieldTypeU16, offsetof(ShipTemplate, vacuum_cargo_slots), 7 },
   { "FuelTank", FieldTypeU32, offsetof(ShipTemplate, cu_m_fuel), 8 },
   { "O2 Tank", FieldTypeU32, offsetof(ShipTemplate, cu_m_o2), 8 },
-//  { "SmugglersHold", FieldTypeU16, offsetof(ShipTemplate, smugglers_hold_cu_m), 13 },
 };
 
 typedef enum EquipmentType {
@@ -355,14 +355,14 @@ typedef struct StarSystem {
 } StarSystem;
 
 global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
-  "Achernar",
+  "Vega",
   "Aldebaran",
   "Mining Colony 17",
   "Antares",
-  "Arcturus",
+  "Mintaka",
   "Barnard's Star",
   "Betelgeuse",
-  "Canopus",
+  "Tau Ceti",
   "Capella",
   "Castor",
   "Centauri Prime",
@@ -371,11 +371,13 @@ global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
   "Fomalhaut",
   "Gliese 581",
   "Hadar",
-  "Izar",
+/*  "Izar",
+  "Achernar",
   "Kepler-186",
   "Lacaille 8760",
   "Lalande 21185",
-  "Mintaka",
+  "Arcturus",
+  "Canopus",
   "Mirach",
   "Polaris",
   "Pollux",
@@ -386,15 +388,14 @@ global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
   "Ross 154",
   "Sirius",
   "Spica",
-  "Tau Ceti",
   "Trappist-1",
-  "Vega",
   "Wolf 359",
   "Zeta Reticuli",
   "Alnitak",
   "Bellatrix",
   "Denebola",
   "Eltanin",
+*/
 };
 
 typedef enum Direction {
@@ -542,6 +543,14 @@ fn u32 shipUsedPassengerBerths(PlayerShip ship) {
 
 fn u32 shipAvailablePassengerBerths(PlayerShip ship) {
   return (u32)ship.passenger_berths - shipUsedPassengerBerths(ship);
+}
+
+fn u32 oxyCostForTravel(PlayerShip* ship, Pos2 current, Pos2 dest) {
+  u32 x_distance = Max(current.x, dest.x) - Min(current.x, dest.x);
+  u32 y_distance = Max(current.y, dest.y) - Min(current.y, dest.y);
+  u32 oxy_per_person_per_dist = 15 - ship->life_support_efficiency;
+  // +1 because the pilot uses oxy as well
+  return (x_distance + y_distance) * oxy_per_person_per_dist * (shipTotalPassengers(*ship) + 1);
 }
 
 #endif //GAMESHARED_H

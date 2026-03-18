@@ -907,6 +907,14 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               strForPlanet(sys.planets[2].type)
             );
           }
+          for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+            StarSystem sys = state->map[i];
+            u32 sysx = x_off + xw*sys.x;
+            u32 sysy = y_off + yh*sys.y;
+            if (sysx == tui->cursor.x && sysy == tui->cursor.y) {
+              renderStrToBuffer(tui->frame_buffer, sysx, sysy+2, STAR_NAMES[i], screen_dimensions);
+            }
+          }
 
           // map key
           y_off += 1+(MAP_HEIGHT*yh);
@@ -943,6 +951,30 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               sbuf,
               "Not enough Fuel! Need %dkg more",
               projected_fuel_cost - state->me.commodities[CommodityHydrogenFuel]
+            );
+            Range1u32 range = {
+              .min = XYToPos(x_off, y_off, screen_dimensions.width),
+              .max = XYToPos(x_off+strlen(sbuf), y_off, screen_dimensions.width),
+            };
+            colorizeRange(tui, range, ANSI_HIGHLIGHT_RED, 0);
+          }
+          renderStrToBuffer(tui->frame_buffer, x_off, y_off++, sbuf, screen_dimensions);
+
+          u32 projected_oxy_cost = oxyCostForTravel(&state->me, curr_pos, dest_pos);
+          bool have_enough_oxy = projected_oxy_cost <= state->me.commodities[CommodityOxygen];
+          MemoryZero(sbuf, SBUFLEN);
+          if (have_enough_oxy) {
+            sprintf(
+              sbuf,
+              "Oxygen Cost: %dkg / %dkg",
+              projected_oxy_cost,
+              state->me.commodities[CommodityOxygen]
+            );
+          } else {
+            sprintf(
+              sbuf,
+              "Not enough Oxygen! Need %dkg more",
+              projected_oxy_cost - state->me.commodities[CommodityOxygen]
             );
             Range1u32 range = {
               .min = XYToPos(x_off, y_off, screen_dimensions.width),

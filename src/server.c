@@ -964,10 +964,15 @@ fn void* gameLoop(void* params) {
         Pos2 dest_pos = {dest.x, dest.y};
         Pos2 curr_pos = {current.x, current.y};
         u32 projected_fuel_cost = fuelCostForTravel(acct->ship.drive_efficiency, curr_pos, dest_pos);
-        bool have_enough_fuel = projected_fuel_cost < acct->ship.commodities[CommodityHydrogenFuel];
-        if (have_enough_fuel) {
+        bool have_enough_fuel = projected_fuel_cost <= acct->ship.commodities[CommodityHydrogenFuel];
+        u32 projected_oxygen_cost = oxyCostForTravel(&acct->ship, curr_pos, dest_pos);
+        bool have_enough_oxy = projected_oxygen_cost <= acct->ship.commodities[CommodityOxygen];
+        if (have_enough_fuel || have_enough_oxy) {
           // remove the fuel they used on the journey
           acct->ship.commodities[CommodityHydrogenFuel] -= projected_fuel_cost;
+          // remove the oxygen they used on the journey
+          acct->ship.commodities[CommodityOxygen] -= projected_oxygen_cost;
+
           // set the pos to be the system they had as destination
           acct->ship.system_idx = acct->destination_sys_idx;
         }
@@ -979,6 +984,28 @@ fn void* gameLoop(void* params) {
           if (acct->ship.remaining_mortgage > 0) {
             f64 compounding = ((f64)acct->ship.remaining_mortgage) * (f64)(acct->ship.interest_rate / 100.0);
             acct->ship.remaining_mortgage += (u32)compounding;
+          }
+        }
+
+        // check for the completion of a passenger job (MUST COME AFTER acct->ship.system_idx is updated)
+        for (u32 ii = 0; ii < MAX_PASSENGER_BERTHS; ii++) {
+          Passenger* job = &acct->ship.passengers[ii];
+          bool is_valid_job = job->people > 0;
+          bool is_at_job_destination = job->goal_system_idx == acct->ship.system_idx;
+          if (is_valid_job) {
+            if (is_at_job_destination) {
+              acct->ship.credits += job->reward;
+              printf("%d credits awarded to %s for finishing passenger job\n", job->reward, acct->name.bytes);
+              MemoryZero(job, sizeof(Passenger));
+              // TODO send a job completion message?
+            } else {
+              job->turns_remaining -= 1;
+              if (job->turns_remaining == 0) {
+                // they failed the job
+                // TODO send a job failed message?
+                MemoryZero(job, sizeof(Passenger));
+              }
+            }
           }
         }
       }

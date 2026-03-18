@@ -240,6 +240,9 @@ fn void renderStrToBuffer(Pixel* buf, u16 x, u16 y, str text, Dim2 screen_dimens
   u32 pos = x + (screen_dimensions.width*y);
   for (u32 i = 0; i < strlen(text); i++) {
     buf[pos+i].bytes[0] = text[i];
+    buf[pos+i].bytes[1] = 0;
+    buf[pos+i].bytes[2] = 0;
+    buf[pos+i].bytes[3] = 0;
   }
 }
 
