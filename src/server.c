@@ -942,7 +942,7 @@ fn void* gameLoop(void* params) {
         for (u32 ii = 0; ii < max_passenger_job_count; ii++) {
           if (sys->offers[ii].people == 0) {
             // TODO choose a system further away
-            sys->offers[ii].goal_system_idx = (i+(rand() % 6)) % STAR_SYSTEM_COUNT;
+            sys->offers[ii].goal_system_idx = (i+1+(rand() % 6)) % STAR_SYSTEM_COUNT;
             sys->offers[ii].people = 1 + (rand() % (MAX_PASSENGER_JOB_PEOPLE - 1));
             sys->offers[ii].time_limit = 3 + (rand() % 5);
             // TODO compute based on distance between people and time_limit
@@ -1232,9 +1232,9 @@ i32 main(i32 argc, ptr argv[]) {
     u32 offer_count = 1 + (rand() % (MAX_PASSENGER_JOB_OFFERS / planet_divisor));
     for (u32 ii = 0; ii < offer_count; ii++) {
       // TODO choose a system further away
-      state.map[i].offers[ii].goal_system_idx = (i+(rand() % 6)) % STAR_SYSTEM_COUNT;
+      state.map[i].offers[ii].goal_system_idx = (i+1+(rand() % 6)) % STAR_SYSTEM_COUNT;
       state.map[i].offers[ii].people = 1 + (rand() % (MAX_PASSENGER_JOB_PEOPLE - 1));
-      state.map[i].offers[ii].time_limit = 3 + (rand() % 5);
+      state.map[i].offers[ii].time_limit = 1 + (rand() % 3);
       // TODO compute based on distance between people and time_limit
       state.map[i].offers[ii].offer = 1000 + (rand() % MAX_PASSENGER_JOB_PRICE);
     }

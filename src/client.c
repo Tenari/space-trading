@@ -335,6 +335,7 @@ fn void resetTabRow(Tab tab) {
     state.row.len = 2;
     state.row.selected_index = 0;
   } else if (state.menu.selected_index == TabPassengers) {
+    state.passenger_tab_state = PassengersTabStateTable;
     StarSystem s = state.map[state.me.system_idx];
     u32 offer_count = 0;
     for (u32 i = 0; i < MAX_PASSENGER_JOB_OFFERS; i++) {
