@@ -447,6 +447,7 @@ typedef enum Message {
   MessagePayoffResult,
   MessageSystemPassengers,
   MessageJobAcceptResult,
+  MessageJobComplete,
   Message_Count,
 } Message;
 

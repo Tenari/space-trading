@@ -997,13 +997,37 @@ fn void* gameLoop(void* params) {
               acct->ship.credits += job->reward;
               printf("%d credits awarded to %s for finishing passenger job\n", job->reward, acct->name.bytes);
               MemoryZero(job, sizeof(Passenger));
-              // TODO send a job completion message?
+              printf("%s FINISHED a passenger job!\n", acct->name.bytes);
+              // send a job completion message?
+              for (u32 i = 1; i < state.clients.length; i++) {
+                if (state.clients.items[i].last_ping != 0 && state.clients.items[i].account_id == acct->id) {
+                  outgoing_message.address = state.clients.items[i].address;
+                  outgoing_message.bytes_len = 2;
+                  outgoing_message.bytes[0] = (u8)MessageJobComplete;
+                  outgoing_message.bytes[1] = true;
+                  outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+                  printf("sent MessageJobComplete to %s\n", acct->name.bytes);
+                  break;
+                }
+              }
             } else {
               job->turns_remaining -= 1;
               if (job->turns_remaining == 0) {
                 // they failed the job
-                // TODO send a job failed message?
                 MemoryZero(job, sizeof(Passenger));
+                printf("%s failed a passenger job\n", acct->name.bytes);
+                // send a job failed message?
+                for (u32 i = 1; i < state.clients.length; i++) {
+                  if (state.clients.items[i].last_ping != 0 && state.clients.items[i].account_id == acct->id) {
+                    outgoing_message.address = state.clients.items[i].address;
+                    outgoing_message.bytes_len = 2;
+                    outgoing_message.bytes[0] = (u8)MessageJobComplete;
+                    outgoing_message.bytes[1] = false;
+                    outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+                    printf("sent MessageJobComplete to %s\n", acct->name.bytes);
+                    break;
+                  }
+                }
               }
             }
           }

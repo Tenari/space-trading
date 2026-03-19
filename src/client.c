@@ -69,6 +69,8 @@ typedef enum Screen {
   ScreenDefeat,
   ScreenVictory,
   ScreenTurnTick,
+  ScreenPassengerJobFailed,
+  ScreenPassengerJobSucceeded,
   Screen_Count
 } Screen;
 
@@ -143,6 +145,8 @@ typedef struct MenuState {
 
 typedef struct GameState {
   Screen screen;
+  bool still_need_to_show_job_completion_screen;
+  bool job_completion_screen_result;
   Screen old_screen;
   PlayerShip me;
   u64 server_frame;
@@ -376,6 +380,9 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     case MessageGameOver: {
       parsed.byte = message[msg_pos++];
     } break;
+    case MessageJobComplete: {
+      parsed.byte = message[msg_pos++];
+    } break;
     case MessageSystemPassengers: {
       parsed.byte = message[msg_pos++];
       u32 i;
@@ -386,9 +393,6 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
         parsed.offers[i].offer = readU32FromBufferLE(message + msg_pos);
         msg_pos += 4;
       }
-      u8 buf[128] = {0};
-      sprintf((ptr)buf, "Got %d passenger jobs for %s", i, STAR_NAMES[parsed.byte]);
-      addSystemMessage(buf);
     } break;
     case MessageJobAcceptResult: {
       parsed.byte = message[msg_pos++]; // boolean success/fail
@@ -575,6 +579,12 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       case MessagePayoffResult: {
         state->ship_tab_states = ShipTabStateMain;
       } break;
+      case MessageJobComplete: {
+        sprintf(sbuf,"MessageJobComplete: %s", msg.byte ? "true" : "false");
+        addSystemMessage((u8*)sbuf);
+        state->still_need_to_show_job_completion_screen = true;
+        state->job_completion_screen_result = msg.byte;
+      } break;
       case MessageTurnTick: {
         MemoryZero(sbuf, SBUFLEN);
         sprintf(sbuf,"got TurnTick message from server %lld", loop_count);
@@ -675,6 +685,80 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 	bool user_pressed_backspace = input_buffer[0] == ASCII_BACKSPACE || input_buffer[0] == ASCII_DEL;
   bool user_pressed_enter = input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED;
   switch (state->screen) {
+    case ScreenPassengerJobFailed: {
+      u32 line = 2;
+      StarSystem dest = state->map[state->destination_sys_idx];
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "Upon arriving at %s", dest.name);
+      renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(sbuf)+4))/2, line++, sbuf, screen_dimensions);
+
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "one of your passenger jobs was failed due to time limit");
+      renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(sbuf)+4))/2, line++, sbuf, screen_dimensions);
+
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "The passenger(s) have left your ship in an angry huff.");
+      renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(sbuf)+4))/2, ++line, sbuf, screen_dimensions);
+
+      line++;
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "CONTINUE");
+      u32 x = (screen_dimensions.width - (strlen(sbuf)+4))/2;
+      Range1u32 range = {
+        .min = XYToPos(x, line, screen_dimensions.width),
+        .max = XYToPos(x+strlen(sbuf), line, screen_dimensions.width),
+      };
+      colorizeRange(tui, range, ANSI_WHITE, ANSI_BLACK);
+      tui->cursor.x = x;
+      tui->cursor.y = line;
+      renderStrToBuffer(tui->frame_buffer, x, line, sbuf, screen_dimensions);
+
+      if (user_pressed_enter || user_pressed_esc || user_pressed_space || user_pressed_tab) {
+        state->screen = ScreenMainGame;
+        state->menu.len = Tab_Count;
+        state->menu.selected_index = TabShip;
+      }
+    } break;
+    case ScreenPassengerJobSucceeded: {
+      u32 line = 2;
+      StarSystem dest = state->map[state->destination_sys_idx];
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "Upon arriving at %s", dest.name);
+      renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(sbuf)+4))/2, line++, sbuf, screen_dimensions);
+
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "one of your passenger jobs is completed!");
+      renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(sbuf)+4))/2, line++, sbuf, screen_dimensions);
+
+      line++;
+
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "The passenger(s) have left your ship");
+      renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(sbuf)+4))/2, ++line, sbuf, screen_dimensions);
+
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "and the reward has been credited to your account.");
+      renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(sbuf)+4))/2, ++line, sbuf, screen_dimensions);
+
+      line++;
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "CONTINUE");
+      u32 x = (screen_dimensions.width - (strlen(sbuf)+4))/2;
+      Range1u32 range = {
+        .min = XYToPos(x, line, screen_dimensions.width),
+        .max = XYToPos(x+strlen(sbuf), line, screen_dimensions.width),
+      };
+      colorizeRange(tui, range, ANSI_WHITE, ANSI_BLACK);
+      tui->cursor.x = x;
+      tui->cursor.y = line;
+      renderStrToBuffer(tui->frame_buffer, x, line, sbuf, screen_dimensions);
+
+      if (user_pressed_enter || user_pressed_esc || user_pressed_space || user_pressed_tab) {
+        state->screen = ScreenMainGame;
+        state->menu.len = Tab_Count;
+        state->menu.selected_index = TabShip;
+      }
+    } break;
     case ScreenTurnTick: {
       u32 line = 2;
       StarSystem dest = state->map[state->destination_sys_idx];
@@ -689,9 +773,14 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width - (strlen(sbuf)+4))/2, ++line, sbuf, screen_dimensions);
 
       if (state->turn_tick_started_on + TURN_TICK_LEN < loop_count) {
-        state->screen = ScreenMainGame;
-        state->menu.len = Tab_Count;
-        state->menu.selected_index = TabMap;
+        if (state->still_need_to_show_job_completion_screen) {
+          state->screen = state->job_completion_screen_result ? ScreenPassengerJobSucceeded : ScreenPassengerJobFailed;
+          state->still_need_to_show_job_completion_screen = false;
+        } else {
+          state->screen = ScreenMainGame;
+          state->menu.len = Tab_Count;
+          state->menu.selected_index = TabMap;
+        }
       }
     } break;
     case ScreenCreateCharacter: {
@@ -1083,6 +1172,14 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           MemoryZero(sbuf, SBUFLEN);
           sprintf(sbuf, "Passengers: %d filling %d / %d berths", passenger_count, used_berths, state->me.passenger_berths);
           renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+          for (u32 i = 0; i < MAX_PASSENGER_BERTHS; i++) {
+            Passenger p = state->me.passengers[i];
+            if (p.people > 0) {
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "- %d credits to %s in %d turns", p.reward, STAR_NAMES[p.goal_system_idx], p.turns_remaining);
+              renderStrToBuffer(tui->frame_buffer, box.x+3, yoff++, sbuf, screen_dimensions);
+            }
+          }
 
           for (u32 i = 0; i < Commodity_Count; i++) {
             MemoryZero(sbuf, SBUFLEN);
@@ -1431,7 +1528,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               DisplayPassengerJobOffer current_row = rows[state->row.selected_index];
               MemoryZero(sbuf, SBUFLEN);
               sprintf(sbuf, "%d passengers to %s", current_row.people, current_row.destination);
-              renderStrToBuffer(tui->frame_buffer, modal_outline.x+(modal_outline.width/2)-strlen(sbuf), y_off++, sbuf, screen_dimensions);
+              renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-strlen(sbuf))/2), y_off++, sbuf, screen_dimensions);
 
               renderStrToBuffer(tui->frame_buffer, modal_outline.x+((modal_outline.width-8)/2), y_off++, "offering", screen_dimensions);
 
