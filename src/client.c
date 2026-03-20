@@ -284,6 +284,7 @@ fn void renderStaticAssetToPixelBuffer(TuiState* tui, u8* asset, u32 len, u16 x,
 
 fn void resetTabRow(Tab tab) {
   if (state.menu.selected_index == TabMarket) {
+    state.market_tab_state = MarketTabStateTable;
     state.row.len = Commodity_Count;
     state.row.selected_index = 0;
     state.modal_choice.selected_index = 0;
@@ -875,9 +876,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "You haven't heard anything interesting lately...", screen_dimensions);
         } break;*/
         case TabMap: {
-          if (input_buffer[0] == 'q' || user_pressed_esc) {
-            should_quit = true;
-          }
           if (user_pressed_up) {
             state->pos.y -= 1;
           } else if (user_pressed_down) {
@@ -1053,9 +1051,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         } break;
         case TabShip: {
           if (state->ship_tab_states == ShipTabStateMain) {
-            if (input_buffer[0] == 'q' || user_pressed_esc) {
-              should_quit = true;
-            }
             moveRowUpDown(user_pressed_up, user_pressed_down);
           }
 
@@ -1141,9 +1136,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
 
           for (u32 i = 0; i < Commodity_Count; i++) {
-            MemoryZero(sbuf, SBUFLEN);
-            sprintf(sbuf, "%-42s %d", COMMODITIES[i].name, state->me.commodities[i]);
-            renderStrToBuffer(tui->frame_buffer, box.x+4, yoff+3+i, sbuf, screen_dimensions);
+            if (i == CommodityOxygen || i == CommodityHydrogenFuel || state->me.commodities[i] > 0) {
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%-42s %d", COMMODITIES[i].name, state->me.commodities[i]);
+              renderStrToBuffer(tui->frame_buffer, box.x+4, yoff+3+i, sbuf, screen_dimensions);
+            }
           }
 
           Box modal_outline = defaultModal(tui);
@@ -1211,11 +1208,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         } break;
         case TabMarket: {
           if (input_buffer[0] == 'q' || user_pressed_esc) {
-            if (state->market_tab_state == MarketTabStateTable) {
-              should_quit = true;
-            } else {
-              state->market_tab_state = MarketTabStateTable;
-            }
+            state->market_tab_state = MarketTabStateTable;
           }
 
           u32 line = box.y + 1;
@@ -1422,12 +1415,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 
         } break;
         case TabPassengers: {
-          if (input_buffer[0] == 'q' || user_pressed_esc) {
-            if (state->passenger_tab_state == PassengersTabStateTable) {
-              should_quit = true;
-            } else {
-              state->passenger_tab_state = PassengersTabStateTable;
-            }
+          if (input_buffer[0] == 'q' || user_pressed_esc || user_pressed_backspace) {
+            state->passenger_tab_state = PassengersTabStateTable;
           }
 
           u32 line = box.y + 1;
