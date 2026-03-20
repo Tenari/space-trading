@@ -187,7 +187,6 @@ global FieldDescriptor COMPARE_COMMODITY_FIELDS[STAR_SYSTEM_COUNT] = {
   { "Travel Fuel kg", FieldTypeU32, offsetof(CompareCommodity, fuel_distance), 16 },
 };
 
-
 ///// FUNCTIONS
 fn ParsedServerMessageThreadQueue* newPSMThreadQueue(Arena* a) {
   ParsedServerMessageThreadQueue* result = arenaAlloc(a, sizeof(ParsedServerMessageThreadQueue));
@@ -263,47 +262,6 @@ fn void renderSystemMessages(Pixel* buf, Dim2 screen_dimensions, Box sys_msg_box
         }
       }
     }
-  }
-}
-
-fn void renderPercentBar(TuiState* tui, u16 x, u16 y, u16 width, u8 ansi_color, u64 value, u64 max) {
-  Pixel* buf = tui->frame_buffer;
-  Dim2 screen_dimensions = tui->screen_dimensions;
-  u16 pos = x + (screen_dimensions.width * y);
-  buf[pos].bytes[0] = '[';
-  pos = x+width + (screen_dimensions.width * y);
-  buf[pos].bytes[0] = ']';
-  pos = x+1 + (screen_dimensions.width * y);
-  f32 base_ratio = 0;
-  if (max != 0) {
-    base_ratio = ((f32)value / (f32)max);
-  }
-  f32 raw_ratio = base_ratio * (width-2);
-  u32 full_spaces_count = (u32) raw_ratio;
-  f32 remainder = raw_ratio - full_spaces_count;
-  for (u32 i = 0; i < full_spaces_count; i++) {
-    buf[pos+i].foreground = ansi_color;
-    renderUtf8CharToBuffer(buf, x+1+i, y, "█", screen_dimensions);
-  }
-  buf[pos+full_spaces_count].foreground = ansi_color;
-  if (value == max) {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, "█", screen_dimensions);
-  } else if (remainder > 0.875) {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, "▉", screen_dimensions);
-  } else if (remainder > 0.75) {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, "▊", screen_dimensions);
-  } else if (remainder > 0.625) {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, "▋", screen_dimensions);
-  } else if (remainder > 0.5) {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, "▌", screen_dimensions);
-  } else if (remainder > 0.375) {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, "▍", screen_dimensions);
-  } else if (remainder > 0.25) {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, "▎", screen_dimensions);
-  } else if (remainder > 0.125) {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, "▏", screen_dimensions);
-  } else {
-    renderUtf8CharToBuffer(buf, x+1+full_spaces_count, y, " ", screen_dimensions);
   }
 }
 

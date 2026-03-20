@@ -32,8 +32,17 @@
 #define CHUNK_SIZE 64
 #define ACCOUNT_LEN (16)
 #define PARSED_CLIENT_COMMAND_THREAD_QUEUE_LEN 64
+#define SYSTEM_MESSAGES_LEN 32
+#define MAX_SYSTEM_MESSAGE_LEN 512
+#define SBUFLEN (512)
 
 ///// TypeDefs
+typedef enum Tab {
+  TabDebug,
+  TabMap,
+  Tab_Count,
+} Tab;
+
 typedef struct ParsedClientCommand {
   CommandType type;
   u8 byte;
@@ -86,6 +95,7 @@ typedef struct ClientList {
 
 typedef struct State {
   bool all_accounts_ready;
+  Tab tab;
   u8 winner_id;
   bool someone_won;
   Mutex client_mutex;
@@ -103,10 +113,48 @@ typedef struct State {
 
 ///// Global Variables
 global State state = { 0 };
+global str TAB_STRS[Tab_Count] = {"Debug", "Map"};
 global Arena permanent_arena = { 0 };
 global bool debug_mode = false;
+global bool should_quit = false;
+global u8List system_messages[SYSTEM_MESSAGES_LEN] = {0};
+global u8 system_message_index = 0;
 
 ///// functionImplementations()
+fn void addSystemMessage(u8* msg) {
+  // save the message to our system_messages ring buffer
+  memset(system_messages[system_message_index].items, 0, SYSTEM_MESSAGES_LEN);
+  sprintf((char*)system_messages[system_message_index].items, "%s", msg);
+  system_messages[system_message_index].length = strlen((char*)system_messages[system_message_index].items);
+  system_message_index += 1;
+  if (system_message_index == SYSTEM_MESSAGES_LEN) {
+    system_message_index = 0;
+  }
+}
+
+fn void renderSystemMessages(Pixel* buf, Dim2 screen_dimensions, Box sys_msg_box) {
+  i32 printable_lines = sys_msg_box.height - 2;
+  if (printable_lines > SYSTEM_MESSAGES_LEN) {
+    printable_lines = SYSTEM_MESSAGES_LEN;
+  }
+  for (i32 i = 0; i < printable_lines; i++) {
+    i32 index = (system_message_index - 1 - i);
+    if (index < 0) {
+      index = SYSTEM_MESSAGES_LEN + index;
+    }
+    u32 y = sys_msg_box.y + (sys_msg_box.height - i) - 1;
+    u8List sys_msg = system_messages[index];
+    for (i32 j = 0; j < MAX_SYSTEM_MESSAGE_LEN && j < sys_msg_box.width-4; j++) {
+      u32 pos = (sys_msg_box.x + 2+j) + (screen_dimensions.width * y);
+      if (j < sys_msg.length) {
+        if (sys_msg.items[j] != '\n') {
+          buf[pos].bytes[0] = sys_msg.items[j];
+        }
+      }
+    }
+  }
+}
+
 fn ParsedClientCommandThreadQueue* newPCCThreadQueue(Arena* a) {
   ParsedClientCommandThreadQueue* result = arenaAlloc(a, sizeof(ParsedClientCommandThreadQueue));
   MemoryZero(result, (sizeof *result));
@@ -279,7 +327,7 @@ fn void sendMessageTransactionResult(SocketAddress addr, u32 qty, bool buying, u
   msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, credits);
   outgoing_message.bytes_len = msg_i;
   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-  printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+  addSystemMessage((u8*)"Message TransactionResult sent");
 }
 
 fn UDPMessage makeMessagePlayerDetails(PlayerShip ship) {
@@ -323,7 +371,7 @@ fn void sendMessageJobAcceptResult(SocketAddress addr, bool result) {
   outgoing_message.bytes[msg_i++] = result;
   outgoing_message.bytes_len = msg_i;
   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-  printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+  addSystemMessage((u8*)"MessageJobAcceptResult sent");
 }
 
 fn void sendMessagePayoffResult(SocketAddress addr) {
@@ -333,7 +381,7 @@ fn void sendMessagePayoffResult(SocketAddress addr) {
   outgoing_message.bytes[msg_i++] = (u8)MessagePayoffResult;
   outgoing_message.bytes_len = msg_i;
   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-  printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+  addSystemMessage((u8*)"MessagePayoffResult sent");
 }
 
 fn void sendMessageStarPositions(SocketAddress addr) {
@@ -351,18 +399,19 @@ fn void sendMessageStarPositions(SocketAddress addr) {
     }
   }
   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-  printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+  addSystemMessage((u8*)"MessageStarPositions sent");
 }
 
 fn void sendMessagePlayerDetails(PlayerShip ship, SocketAddress addr) {
   UDPMessage outgoing_message = makeMessagePlayerDetails(ship);
   outgoing_message.address = addr;
   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-  printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+  addSystemMessage((u8*)"MessagePlayerDetails sent");
 }
 
 fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 socket) {
   dbg("%d: %s from %s:%d\n", len, command_type_strings[message[0]], inet_ntoa(sender.sin_addr), sender.sin_port);
+  char sbuf[SBUFLEN] = {0};
   u32 msg_idx = 0;
   ParsedClientCommand parsed = {
     .type = (CommandType)message[msg_idx++],
@@ -408,12 +457,16 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       parsed.pass = allocStringChunkList(&state.string_arena, temp_str);
       msg_idx += temp_str.length;
 
-      printf("Logging in player: %s %d %s\n", MESSAGE_STRINGS[parsed.type], name_len, message + 7);
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "Logging in player: %s %d %s\n", command_type_strings[parsed.type], name_len, message + 7);
+      addSystemMessage((u8*)sbuf);
     } break;
     case CommandKeepAlive: break;
     case CommandPayMortgage: {
       parsed.id = readU64FromBufferLE(message + msg_idx);
-      printf("paying off %lld\n", parsed.id);
+      MemoryZero(sbuf, SBUFLEN);
+      sprintf(sbuf, "paying off %lld", parsed.id);
+      addSystemMessage((u8*)sbuf);
     } break;
     case CommandSetDestination: {
       parsed.byte = message[1]; // index of system in array
@@ -422,17 +475,17 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       parsed.byte = message[1]; // boolean ready_to_depart
     } break;
     case CommandTransact: {
-      printf("command transact received\n");
+      addSystemMessage((u8*)"command transact received");
       parsed.byte = message[1]; // buy?
       parsed.qty = readU32FromBufferLE(message + 2);
       parsed.commodity = message[6];
     } break;
     case CommandCreateCharacter: {
-      printf("command create character received\n");
+      addSystemMessage((u8*)"command create character received");
       parsed.byte = message[1];
     } break;
     case CommandAcceptPassengerJob: {
-      printf("command accept passenger job received\n");
+      addSystemMessage((u8*)"command accept passenger job received\n");
       parsed.byte = message[1];
       parsed.people = message[2];
       parsed.time_limit = message[3];
@@ -445,7 +498,6 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
   }
 
   pccThreadSafeQueuePush(state.network_recv_queue, &parsed);
-  fflush(stdout);
 }
 
 fn void* receiveNetworkUpdates(void* udp) {
@@ -460,8 +512,9 @@ fn void* sendNetworkUpdates(void* sock) {
   tctxInit(&tctx);
   i32* socket_ptr = (i32*)sock;
   i32 socket = *socket_ptr;
+  char sbuf[SBUFLEN] = {0};
   u64 send_loop = 0;
-  while (true) {
+  while (!should_quit) {
     send_loop += 1;
     u64 loop_start = osTimeMicrosecondsNow();
 
@@ -524,7 +577,9 @@ fn void* sendNetworkUpdates(void* sock) {
             sendUDPu8List(socket, &client.address, &msg);
 
             // send passenger jobs
-            printf("sending passenger jobs for %s\n", STAR_NAMES[ii]);
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "sending passenger jobs for %s\n", STAR_NAMES[ii]);
+            addSystemMessage((u8*)sbuf);
             msg_data = makeMessageSystemPassengers(&state.map[ii]);
             msg.capacity = UDP_MAX_MESSAGE_LEN;
             msg.items = msg_data.bytes;
@@ -579,15 +634,16 @@ fn void* gameLoop(void* params) {
     .lane_ctx = *lane_ctx,
   };
   tctxInit(&tctx);
-  printf("Lane %lld (%lld) of %lld starting.\n", lane_ctx->lane_idx, LaneIdx(), lane_ctx->lane_count);
-  fflush(stdout);
+  char sbuf[SBUFLEN] = {0};
+  sprintf(sbuf, "Lane %lld (%lld) of %lld starting.", lane_ctx->lane_idx, LaneIdx(), lane_ctx->lane_count);
+  addSystemMessage((u8*)sbuf);
   UDPMessage outgoing_message = {0};
   u64 loop_start;
   u64 last_burn = 0;
   u64 last_hp_regen = 0;
   Arena scratch_arena = {0};
   arenaInit(&scratch_arena);
-  while (true) {
+  while (!should_quit) {
     loop_start = osTimeMicrosecondsNow();
 
     if (LaneIdx() == 0) { // narrow
@@ -684,7 +740,9 @@ fn void* gameLoop(void* params) {
             }
           } break;
           case CommandTransact: {
-            printf("Transact for client_handle=%d, on #%lld", client_handle, state.frame);
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "Transact for client_handle=%d, on #%lld", client_handle, state.frame);
+            addSystemMessage((u8*)sbuf);
             bool is_buying_from_system = msg.byte;
             Account* account = &state.accounts[client->account_id];
             StarSystem* sys = findAccountsSystem(account);
@@ -745,7 +803,9 @@ fn void* gameLoop(void* params) {
             if (client_handle == 0) {
               client_handle = pushClient(&state.clients, sender);
               client = &state.clients.items[client_handle];
-              printf("pushed new client handle = %d\n", client_handle);
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "pushed new client handle = %d\n", client_handle);
+              addSystemMessage((u8*)sbuf);
             }
             // update/set the lan_ip/port info for p2p connections
             client->lan_ip = htonl(msg.alt_ip);
@@ -765,15 +825,16 @@ fn void* gameLoop(void* params) {
             releaseStringChunkList(&state.string_arena, &msg.pass);
 
             Account* existing_account = findAccountByName(name);
-            printf("name(%d): %s pw(%d): %s acct?: %d\n", name.length, name.bytes, pw.length, pw.bytes, existing_account != NULL);
-            fflush(stdout);
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "name(%d): %s pw(%d): %s acct?: %d\n", name.length, name.bytes, pw.length, pw.bytes, existing_account != NULL);
+            addSystemMessage((u8*)sbuf);
             if (existing_account) {
-              printf(" existing account\n");
+              addSystemMessage((u8*)" existing account\n");
               bool pw_matches = stringsEq(&pw, &existing_account->pw);
               arenaDealloc(&permanent_arena, pw.capacity);
               arenaDealloc(&permanent_arena, name.capacity);
               if (pw_matches) {
-                printf(" pw matched\n");
+                addSystemMessage((u8*)" pw matched\n");
                 existing_account->changed = true;
                 sendMessageStarPositions(sender);
               } else {
@@ -782,7 +843,7 @@ fn void* gameLoop(void* params) {
                 outgoing_message.bytes_len = 1;
                 outgoing_message.address = sender;
                 outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-                printf("MessageBadPw sent\n");
+                addSystemMessage((u8*)"MessageBadPw sent\n");
                 break;
               }
             } else {
@@ -793,7 +854,9 @@ fn void* gameLoop(void* params) {
                   break;
                 }
               }
-              printf("new account id=%d\n", existing_account->id);
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "new account id=%d\n", existing_account->id);
+              addSystemMessage((u8*)sbuf);
               existing_account->name = name;
               existing_account->pw = pw;
             }
@@ -805,20 +868,24 @@ fn void* gameLoop(void* params) {
               outgoing_message.bytes_len = 9;
               outgoing_message.address = sender;
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-              printf("MessageCharacterId sent\n");
+              addSystemMessage((u8*)"MessageCharacterId sent\n");
             } else {
               // tell the client they made a new account
               outgoing_message.bytes[0] = (u8)MessageNewAccountCreated;
               outgoing_message.bytes_len = 1;
               outgoing_message.address = sender;
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-              printf("MessageNewAccountCreated sent\n");
+              addSystemMessage((u8*)"MessageNewAccountCreated sent\n");
             }
-            printf("client_handle=%d, acct_id=%d\n", client_handle, existing_account->id);
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "client_handle=%d, acct_id=%d\n", client_handle, existing_account->id);
+            addSystemMessage((u8*)sbuf);
           } break;
           case CommandCreateCharacter: {
             Account* account = &state.accounts[client->account_id];
-            printf("creating character for account id=%d, %s\n", account->id, SHIP_TYPE_STRINGS[msg.byte]);
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "creating character for account id=%d, %s\n", account->id, SHIP_TYPE_STRINGS[msg.byte]);
+            addSystemMessage((u8*)sbuf);
             if (shipIsNull(&account->ship)) {
               ShipTemplate template = SHIPS[msg.byte];
               PlayerShip player_ship = {
@@ -841,7 +908,11 @@ fn void* gameLoop(void* params) {
               player_ship.commodities[CommodityHydrogenFuel] = player_ship.cu_m_fuel;
               player_ship.commodities[CommodityOxygen] = player_ship.cu_m_o2;
               account->ship = player_ship;
-              printf("ship_type=%s, client_handle=%d, acct_id=%d\n", SHIP_TYPE_STRINGS[msg.byte], client_handle, account->id);
+
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "ship_type=%s, client_handle=%d, acct_id=%d\n", SHIP_TYPE_STRINGS[msg.byte], client_handle, account->id);
+              addSystemMessage((u8*)sbuf);
+
               u32 starting_system_idx = rand() % STAR_SYSTEM_COUNT;
               StarSystem starting_system = state.map[starting_system_idx];
               account->ship.system_idx = starting_system_idx;
@@ -852,7 +923,7 @@ fn void* gameLoop(void* params) {
               outgoing_message.bytes[0] = (u8)MessageCharacterId;
               writeU64ToBufferLE(outgoing_message.bytes + 1, account->ship.id);
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-              printf("MessageCharacterId sent\n");
+              addSystemMessage((u8*)"MessageCharacterId sent\n");
 
               sendMessagePlayerDetails(account->ship, sender);
 
@@ -861,9 +932,11 @@ fn void* gameLoop(void* params) {
               outgoing_message = makeMessageSystemCommodities(&starting_system);
               outgoing_message.address = sender;
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-              printf("%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
+              addSystemMessage((u8*)sbuf);
             } else {
-              printf("client tried to create a character when he already has one.");
+              addSystemMessage((u8*)"client tried to create a character when he already has one.");
             }
           } break;
           case CommandType_Count:
@@ -916,7 +989,7 @@ fn void* gameLoop(void* params) {
 
     // 2. tick non-user entities
     if (state.all_accounts_ready) {
-      printf("NEW TURN: ticking all_accounts_ready\n");
+      addSystemMessage((u8*)"NEW TURN: ticking all_accounts_ready");
       // tick all the star systems
       StarSystem* sys = NULL;
       Range1u64 sys_range = LaneRange(STAR_SYSTEM_COUNT);
@@ -995,9 +1068,13 @@ fn void* gameLoop(void* params) {
           if (is_valid_job) {
             if (is_at_job_destination) {
               acct->ship.credits += job->reward;
-              printf("%d credits awarded to %s for finishing passenger job\n", job->reward, acct->name.bytes);
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%d credits awarded to %s for finishing passenger job\n", job->reward, acct->name.bytes);
+              addSystemMessage((u8*)sbuf);
               MemoryZero(job, sizeof(Passenger));
-              printf("%s FINISHED a passenger job!\n", acct->name.bytes);
+              MemoryZero(sbuf, SBUFLEN);
+              sprintf(sbuf, "%s FINISHED a passenger job!\n", acct->name.bytes);
+              addSystemMessage((u8*)sbuf);
               // send a job completion message?
               for (u32 i = 1; i < state.clients.length; i++) {
                 if (state.clients.items[i].last_ping != 0 && state.clients.items[i].account_id == acct->id) {
@@ -1006,7 +1083,9 @@ fn void* gameLoop(void* params) {
                   outgoing_message.bytes[0] = (u8)MessageJobComplete;
                   outgoing_message.bytes[1] = true;
                   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-                  printf("sent MessageJobComplete to %s\n", acct->name.bytes);
+                  MemoryZero(sbuf, SBUFLEN);
+                  sprintf(sbuf, "sent MessageJobComplete to %s\n", acct->name.bytes);
+                  addSystemMessage((u8*)sbuf);
                   break;
                 }
               }
@@ -1015,7 +1094,9 @@ fn void* gameLoop(void* params) {
               if (job->turns_remaining == 0) {
                 // they failed the job
                 MemoryZero(job, sizeof(Passenger));
-                printf("%s failed a passenger job\n", acct->name.bytes);
+                MemoryZero(sbuf, SBUFLEN);
+                sprintf(sbuf, "%s failed a passenger job\n", acct->name.bytes);
+                addSystemMessage((u8*)sbuf);
                 // send a job failed message?
                 for (u32 i = 1; i < state.clients.length; i++) {
                   if (state.clients.items[i].last_ping != 0 && state.clients.items[i].account_id == acct->id) {
@@ -1024,7 +1105,9 @@ fn void* gameLoop(void* params) {
                     outgoing_message.bytes[0] = (u8)MessageJobComplete;
                     outgoing_message.bytes[1] = false;
                     outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-                    printf("sent MessageJobComplete to %s\n", acct->name.bytes);
+                    MemoryZero(sbuf, SBUFLEN);
+                    sprintf(sbuf, "sent MessageJobComplete to %s\n", acct->name.bytes);
+                    addSystemMessage((u8*)sbuf);
                     break;
                   }
                 }
@@ -1043,7 +1126,9 @@ fn void* gameLoop(void* params) {
         if (acct->ship.remaining_mortgage == 0) {
           state.winner_id = acct->id;
           state.someone_won = true;
-          printf("%s WON!!! %d\n", acct->name.bytes, i);
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "%s WON!!! %d\n", acct->name.bytes, i);
+          addSystemMessage((u8*)sbuf);
           acct->changed = true;
           break;
         }
@@ -1073,6 +1158,170 @@ fn void setLowProductionCommodity(Planet* p, CommodityType t) {
   p->production[t] = rand() % (COMMODITIES[t].consumption / 2);
 }
 
+fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count) {
+  State* state = (State*) s;
+  Dim2 screen_dimensions = tui->screen_dimensions;
+  if (screen_dimensions.height > MAX_SCREEN_HEIGHT || screen_dimensions.width > MAX_SCREEN_WIDTH) {
+    printf("\033[2J\033[%d;%df Your screen is too damn big. Shrink it to %dx%d max, bro... geez", 1,1, MAX_SCREEN_WIDTH, MAX_SCREEN_HEIGHT);
+    fflush(stdout);
+    return should_quit;
+  }
+  char sbuf[SBUFLEN] = {0};
+  
+  // operate on screen-based input+state
+  bool user_pressed_tab = input_buffer[0] == ASCII_TAB && input_buffer[1] == 0;
+  bool user_pressed_shift_tab = input_buffer[0] == '\x1b' && input_buffer[1] == '[' && input_buffer[2] == 'Z';
+  bool user_pressed_space = input_buffer[0] == ' ' && input_buffer[1] == 0;
+  bool user_pressed_esc = input_buffer[0] == ASCII_ESCAPE && input_buffer[1] == 0;
+  bool user_pressed_a_number = input_buffer[0] >= '0' && input_buffer[0] <= '9' && input_buffer[1] == 0;
+  bool user_pressed_up = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 65;
+  bool user_pressed_down = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 66;
+  bool user_pressed_left = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 68;
+  bool user_pressed_right = input_buffer[0] == 27 && input_buffer[1] == 91 && input_buffer[2] == 67;
+  bool user_pressed_backspace = input_buffer[0] == ASCII_BACKSPACE || input_buffer[0] == ASCII_DEL;
+  bool user_pressed_enter = input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED;
+
+  if (user_pressed_tab || user_pressed_shift_tab) {
+    state->tab = state->tab == TabDebug ? TabMap : TabDebug;
+  }
+
+  // draw the tabs box
+  u32 tabs_y = 1;
+  u32 box_y = tabs_y + 2;
+  Box box = {
+    .x = 1,
+    .y = box_y,
+    .width = screen_dimensions.width - 3,
+    .height = screen_dimensions.height - box_y - 2,
+  };
+  drawAnsiBox(tui->frame_buffer, box, screen_dimensions, true);
+  u32 tx = 2;
+  // draw the actual tabs
+  for (u32 i = 0; i < Tab_Count; i++) {
+    u32 tab_len = strlen(TAB_STRS[i]);
+    Box b = { .x = tx, .y = tabs_y, .width = tab_len+1, .height = 1 };
+    drawAnsiBox(tui->frame_buffer, b, screen_dimensions, state->tab == i);
+    renderStrToBuffer(tui->frame_buffer, tx+1, tabs_y+ 1, TAB_STRS[i], screen_dimensions);
+    tx += (tab_len + 3);
+  }
+
+  switch (state->tab) {
+    case TabDebug: {
+      if (input_buffer[0] == 'q' || user_pressed_esc) {
+        should_quit = true;
+      }
+      renderSystemMessages(tui->frame_buffer, tui->screen_dimensions, box);
+    } break;
+    case TabMap: {
+      u8 COLORS[] = {ANSI_HIGHLIGHT_RED, ANSI_HIGHLIGHT_BLUE, ANSI_HIGHLIGHT_YELLOW, ANSI_HIGHLIGHT_GREEN, ANSI_HIGHLIGHT_GRAY};
+      u32 xw = 4;
+      u32 yh = 2;
+      if (box.width <= MAP_WIDTH*xw) {
+        renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+2, "Your screen needs to be wider...", screen_dimensions);
+        break;
+      }
+      if (box.height < MAP_HEIGHT*yh) {
+        renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+2, "Your screen needs to be taller...", screen_dimensions);
+        break;
+      }
+
+      // render the damn map
+      u32 x_off = box.x+((box.width - MAP_WIDTH*xw)/2);
+      u32 y_off = box.y+1;
+      for (u32 i = 0; i < MAP_WIDTH*xw; i++) {
+        for (u32 ii = 0; ii < MAP_HEIGHT*yh; ii++) {
+          u32 sysx = i / xw;
+          u32 sysy = ii / yh;
+          u32 bufpos = XYToPos(x_off+i, y_off+ii, screen_dimensions.width);
+          tui->frame_buffer[bufpos].bytes[0] = ' ';
+          tui->frame_buffer[bufpos].foreground = ANSI_WHITE;
+          tui->frame_buffer[bufpos].background = ANSI_BLACK;
+          // try to colorize the map cell if a player is on it
+          for (u32 iii = 0; iii < ACCOUNT_LEN; iii++) {
+            Account* acct = &state->accounts[iii];
+            if (acct->name.length > 0) {
+              StarSystem sys = state->map[acct->ship.system_idx];
+              if (sys.x == sysx && sys.y == sysy) {
+                Box current_key = { .height = yh, .width = xw, .x = x_off+i, .y = y_off+ii };
+                colorizeBox(tui, current_key, COLORS[iii], 0, ' ');
+              }
+            }
+          }
+          //if (state->pos.x == sysx && state->pos.y == sysy) {
+          //  tui->frame_buffer[bufpos].background = ANSI_WHITE;
+          //  tui->frame_buffer[bufpos].foreground = ANSI_BLACK;
+          //} else {
+          //}
+        }
+      }
+      for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+        StarSystem sys = state->map[i];
+        u32 sysx = x_off + xw*sys.x;
+        u32 sysy = y_off + yh*sys.y;
+        // clear the render-grid for this "tile" position
+        for (u32 ii = 0; ii < xw; ii++) {
+          for (u32 iii = 0; iii < yh; iii++) {
+            u32 bufpos = XYToPos(sysx+ii, sysy+iii, screen_dimensions.width);
+            tui->frame_buffer[bufpos].bytes[0] = 0;
+          }
+        }
+        renderUtf8CodePoint(tui, sysx, sysy, "⭐");
+        renderUtf8CodePoint(
+          tui,
+          sysx +2,
+          sysy,
+          strForPlanet(sys.planets[0].type)
+        );
+        renderUtf8CodePoint(
+          tui,
+          sysx,
+          sysy +1,
+          strForPlanet(sys.planets[1].type)
+        );
+        renderUtf8CodePoint(
+          tui,
+          sysx +2,
+          sysy +1,
+          strForPlanet(sys.planets[2].type)
+        );
+      }
+      for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+        StarSystem sys = state->map[i];
+        u32 sysx = x_off + xw*sys.x;
+        u32 sysy = y_off + yh*sys.y;
+        if (sysx == tui->cursor.x && sysy == tui->cursor.y) {
+          renderStrToBuffer(tui->frame_buffer, sysx, sysy+2, STAR_NAMES[i], screen_dimensions);
+        }
+      }
+      // TODO fix the background bleed from previous line
+
+      // map key
+      y_off += 1+(MAP_HEIGHT*yh);
+      u32 original_x_off = x_off;
+      for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+        Account* acct = &state->accounts[i];
+        if (acct->name.length > 0) {
+          Box current_key = { .height = yh, .width = xw, .x = x_off, .y = y_off };
+          colorizeBox(tui, current_key, COLORS[i], 0, ' ');
+          renderStrToBuffer(tui->frame_buffer, x_off+5, y_off, acct->name.bytes, screen_dimensions);
+
+          if (i % 2 == 0) {
+            x_off += 20;
+          } else if (i % 2 == 1) {
+            y_off += 3;
+            x_off = original_x_off;
+          }
+        }
+      }
+
+    } break;
+    case Tab_Count: {} break;
+  }
+  
+  return should_quit;
+}
+
+
 // THE SERVER
 i32 main(i32 argc, ptr argv[]) {
   osInit();
@@ -1101,6 +1350,14 @@ i32 main(i32 argc, ptr argv[]) {
   state.clients.capacity = SERVER_MAX_CLIENTS;
   state.clients.length = 1; // making entry 0 to be a "null" client 
   state.clients.items = (Client*)arenaAllocArray(&permanent_arena, Client, SERVER_MAX_CLIENTS);
+  for (i32 i = 0; i < SYSTEM_MESSAGES_LEN; i++) {
+    system_messages[i].capacity = MAX_SYSTEM_MESSAGE_LEN;
+    system_messages[i].length = 0;
+    system_messages[i].items = arenaAllocArraySized(&permanent_arena, sizeof(u8), MAX_SYSTEM_MESSAGE_LEN);
+  }
+
+  // GAME LOGIC SETUP
+
   // set position of all star systems
   for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
     state.map[i].idx = i;
@@ -1260,6 +1517,13 @@ i32 main(i32 argc, ptr argv[]) {
     lane_ctxs[i].broadcast_memory = &lane_broadcast_val;
     game_threads[i] = spawnThread(&gameLoop, &lane_ctxs[i]);
   }
+  infiniteUILoop(
+    MAX_SCREEN_WIDTH,
+    MAX_SCREEN_HEIGHT,
+    GOAL_GAME_LOOP_US,
+    &state,
+    updateAndRender
+  );
   for (u32 i = 0; i < GAME_THREAD_CONCURRENCY; i++) {
     osThreadJoin(game_threads[i], MAX_u64);
   }

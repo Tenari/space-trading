@@ -47,28 +47,28 @@ typedef struct ShipTemplate {
 
 global ShipTemplate SHIPS[] = {
   {
-    .type = ShipSparrow, .drive_efficiency = 10, .life_support_efficiency = 1,
+    .type = ShipSparrow, .drive_efficiency = 1, .life_support_efficiency = 1,
     .vacuum_cargo_slots = 5, .climate_cargo_slots = 0, .passenger_berths = 0,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 1, .base_cost = 100000,
-    .cu_m_fuel = 2500, .cu_m_o2 = 1000,
+    .cu_m_fuel = 2500, .cu_m_o2 = 500,
   },
   {
-    .type = ShipDart,    .drive_efficiency = 70, .life_support_efficiency = 3,
+    .type = ShipDart,    .drive_efficiency = 7, .life_support_efficiency = 3,
     .vacuum_cargo_slots = 6, .climate_cargo_slots = 0, .passenger_berths = 1,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 150000,
     .cu_m_fuel = 2000, .cu_m_o2 = 2000,
   },
   {
-    .type = ShipHaulerPrimeZ1, .drive_efficiency = 50, .life_support_efficiency = 2,
+    .type = ShipHaulerPrimeZ1, .drive_efficiency = 5, .life_support_efficiency = 2,
     .vacuum_cargo_slots = 30, .climate_cargo_slots = 0, .passenger_berths = 0,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 250000,
     .cu_m_fuel = 2500, .cu_m_o2 = 1000,
   },
   {
-    .type = ShipNX400, .drive_efficiency = 60, .life_support_efficiency = 5,
+    .type = ShipNX400, .drive_efficiency = 6, .life_support_efficiency = 5,
     .vacuum_cargo_slots = 3, .climate_cargo_slots = 0, .passenger_berths = 3,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 250000,
@@ -488,8 +488,8 @@ fn u32 usedVacuumCargoSlots(PlayerShip ship) {
 fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
   f32 result = 0.0;
   Commodity details = COMMODITIES[type];
-  f32 max = details.price * 5;
-  f32 min = (f32)details.price / 5.0;
+  f32 max = details.price * 3;
+  f32 min = (f32)details.price / 3.0;
   if (quantity == 0) {
     return max;
   }
@@ -502,16 +502,17 @@ fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
   }
   // the bid/ask spread
   if (bid) {
-    result = result * 0.98;
+    result = result * 0.97;
   } else {
-    result = result * 1.02;
+    result = result * 1.03;
   }
   return result;
 }
 
 fn f32 calcInterestRate(u32 cost, u32 down_payment) {
-  f32 mortgage_rate = 10.0 *(1.0 - (3.0*(f32)down_payment / ((f32)cost/3.0)));
-  return mortgage_rate;
+  return 3.0;
+  //f32 mortgage_rate = 10.0 *(1.0 - (3.0*(f32)down_payment / ((f32)cost/3.0)));
+  //return mortgage_rate;
 }
 
 fn bool passengerJobEq(PassengerJobOffer a, PassengerJobOffer b) {
