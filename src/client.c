@@ -379,7 +379,8 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       u32 planet_count = message[msg_pos++];
       for (u32 i = 0; i < planet_count; i++) {
         for (u32 ii = 0; ii < Commodity_Count; ii++) {
-          parsed.sys.planets[i].commodities[ii] = message[msg_pos++];
+          parsed.sys.planets[i].commodities[ii] = readU32FromBufferLE(message + msg_pos);
+          msg_pos += 4;
         }
       }
     } break;

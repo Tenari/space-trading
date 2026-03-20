@@ -312,7 +312,7 @@ fn UDPMessage makeMessageSystemCommodities(StarSystem* sys) {
   outgoing_message.bytes[msg_i++] = (u8)planet_count;
   for (u32 i = 0; i < planet_count; i++) {
     for (u32 ii = 0; ii < Commodity_Count; ii++) {
-      outgoing_message.bytes[msg_i++] = sys->planets[i].commodities[ii];
+      msg_i += writeU32ToBufferLE(outgoing_message.bytes + msg_i, sys->planets[i].commodities[ii]);
     }
   }
   outgoing_message.bytes_len = msg_i;
@@ -901,7 +901,7 @@ fn void* gameLoop(void* params) {
                 .base_cost = template.base_cost,
                 .remaining_mortgage = template.base_cost - STARTING_DOWN_PAYMENT,
                 .interest_rate = calcInterestRate(template.base_cost, STARTING_DOWN_PAYMENT),
-                .credits = 10000.0,
+                .credits = 2000.0,
                 .cu_m_fuel = template.cu_m_fuel,
                 .cu_m_o2 = template.cu_m_o2,
                 .id = account->id,
@@ -1152,11 +1152,17 @@ fn void* gameLoop(void* params) {
 fn void setHighProductionCommodity(Planet* p, CommodityType t) {
   p->commodities[t] = (COMMODITIES[t].qty / 2) + (rand() % COMMODITIES[t].qty);
   p->production[t] = COMMODITIES[t].consumption + (rand() % COMMODITIES[t].consumption);
+  if (t == CommodityHydrogenFuel || t == CommodityOxygen) {
+    p->commodities[t] = COMMODITIES[t].qty * 2;
+  }
 }
 
 fn void setLowProductionCommodity(Planet* p, CommodityType t) {
   p->commodities[t] = rand() % (COMMODITIES[t].qty / 2);
   p->production[t] = rand() % (COMMODITIES[t].consumption / 2);
+  if (t == CommodityHydrogenFuel || t == CommodityOxygen) {
+    p->commodities[t] = COMMODITIES[t].qty;
+  }
 }
 
 fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count) {
@@ -1399,6 +1405,7 @@ i32 main(i32 argc, ptr argv[]) {
   }
 
   // now, build out the commodity info and passenger jobs for the systems
+  char sbuf[SBUFLEN] = {0};
   for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
     u32 planet_count = rand() % MAX_PLANETS + 1;
     for (u32 ii = 0; ii < planet_count; ii++) {
@@ -1409,6 +1416,7 @@ i32 main(i32 argc, ptr argv[]) {
         p->commodities[iii] = (COMMODITIES[iii].qty / 5) + (rand() % COMMODITIES[iii].qty);
         p->production[iii] = 1 + (rand() % COMMODITIES[iii].consumption);
       }
+      // everyone starts with "a lot" of fuel and o2
       p->commodities[CommodityHydrogenFuel] = COMMODITIES[CommodityHydrogenFuel].qty * 2;
       p->commodities[CommodityOxygen] = COMMODITIES[CommodityOxygen].qty * 2;
       // now, override for the "specialty" of the planet
@@ -1475,6 +1483,20 @@ i32 main(i32 argc, ptr argv[]) {
           break;
       }
     }
+
+    MemoryZero(sbuf, SBUFLEN);
+    sprintf(
+      sbuf,
+      "%s: fuel: %d  o2: %d",
+      STAR_NAMES[i],
+      state.map[i].planets[0].commodities[CommodityHydrogenFuel] +
+        state.map[i].planets[1].commodities[CommodityHydrogenFuel] +
+        state.map[i].planets[2].commodities[CommodityHydrogenFuel],
+      state.map[i].planets[0].commodities[CommodityOxygen] +
+        state.map[i].planets[1].commodities[CommodityOxygen] +
+        state.map[i].planets[2].commodities[CommodityOxygen]
+    );
+    addSystemMessage((u8*)sbuf);
 
     u32 planet_divisor = ((MAX_PLANETS - planet_count)+1);
     u32 offer_count = 1 + (rand() % (MAX_PASSENGER_JOB_OFFERS / planet_divisor));
