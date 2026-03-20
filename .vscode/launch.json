@@ -12,6 +12,18 @@
             "environment": [],
             "externalConsole": true,
             "MIMode": "lldb"
+        },
+        {
+            "name": "Debug Server",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/server",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": true,
+            "MIMode": "lldb"
         }
     ]
 }

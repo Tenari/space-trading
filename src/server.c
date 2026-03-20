@@ -1153,7 +1153,7 @@ fn void setHighProductionCommodity(Planet* p, CommodityType t) {
   p->commodities[t] = (COMMODITIES[t].qty / 2) + (rand() % COMMODITIES[t].qty);
   p->production[t] = COMMODITIES[t].consumption + (rand() % COMMODITIES[t].consumption);
   if (t == CommodityHydrogenFuel || t == CommodityOxygen) {
-    p->commodities[t] = COMMODITIES[t].qty * 2;
+    p->commodities[t] = COMMODITIES[t].qty;
   }
 }
 
@@ -1161,7 +1161,7 @@ fn void setLowProductionCommodity(Planet* p, CommodityType t) {
   p->commodities[t] = rand() % (COMMODITIES[t].qty / 2);
   p->production[t] = rand() % (COMMODITIES[t].consumption / 2);
   if (t == CommodityHydrogenFuel || t == CommodityOxygen) {
-    p->commodities[t] = COMMODITIES[t].qty;
+    p->commodities[t] = COMMODITIES[t].qty / 2;
   }
 }
 
@@ -1195,6 +1195,23 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   // show what ip to connect to
   renderStrToBuffer(tui->frame_buffer, screen_dimensions.width - 18, 1, state->server_ip_address.bytes, screen_dimensions);
 
+  if (input_buffer[0] == 'q' || user_pressed_esc) {
+    should_quit = true;
+  }
+  if (state->someone_won) {
+    for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+      Account* acct = &state->accounts[i];
+      if (!shipIsNull(&acct->ship)) {
+        if (acct->ship.remaining_mortgage == 0) {
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "%s WON!!!", acct->name.bytes);
+          renderStrToBuffer(tui->frame_buffer, (screen_dimensions.width-strlen(sbuf)) /2, 10, sbuf, screen_dimensions);
+          return should_quit;
+        }
+      }
+    }
+  }
+
   // draw the tabs box
   u32 tabs_y = 0;
   u32 box_y = tabs_y + 2;
@@ -1217,13 +1234,10 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 
   switch (state->tab) {
     case TabDebug: {
-      if (input_buffer[0] == 'q' || user_pressed_esc) {
-        should_quit = true;
-      }
       renderSystemMessages(tui->frame_buffer, tui->screen_dimensions, box);
     } break;
     case TabMap: {
-      u8 COLORS[] = {ANSI_HIGHLIGHT_RED, ANSI_HIGHLIGHT_BLUE, ANSI_HIGHLIGHT_YELLOW, ANSI_HIGHLIGHT_GREEN, ANSI_HIGHLIGHT_GRAY};
+      u8 COLORS[] = {ANSI_HIGHLIGHT_RED, ANSI_HIGHLIGHT_BLUE, ANSI_HIGHLIGHT_YELLOW, ANSI_HIGHLIGHT_GREEN, ANSI_WHITE};
       u32 xw = 4;
       u32 yh = 2;
       if (box.width <= MAP_WIDTH*xw) {
@@ -1257,11 +1271,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               }
             }
           }
-          //if (state->pos.x == sysx && state->pos.y == sysy) {
-          //  tui->frame_buffer[bufpos].background = ANSI_WHITE;
-          //  tui->frame_buffer[bufpos].foreground = ANSI_BLACK;
-          //} else {
-          //}
         }
       }
       for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
@@ -1294,33 +1303,22 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           sysy +1,
           strForPlanet(sys.planets[2].type)
         );
-      }
-      for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
-        StarSystem sys = state->map[i];
-        u32 sysx = x_off + xw*sys.x;
-        u32 sysy = y_off + yh*sys.y;
-        if (sysx == tui->cursor.x && sysy == tui->cursor.y) {
-          renderStrToBuffer(tui->frame_buffer, sysx, sysy+2, STAR_NAMES[i], screen_dimensions);
-        }
+        renderStrToBuffer(tui->frame_buffer, sysx-((strlen(STAR_NAMES[i])-4)/2), sysy-1, STAR_NAMES[i], screen_dimensions);
       }
       // TODO fix the background bleed from previous line
 
       // map key
       y_off += 1+(MAP_HEIGHT*yh);
-      u32 original_x_off = x_off;
-      for (u32 i = 0; i < ACCOUNT_LEN; i++) {
+      x_off = box.x + 3;
+      for (u32 i = 0; i < ACCOUNT_LEN; i++, x_off += 18) {
         Account* acct = &state->accounts[i];
         if (acct->name.length > 0) {
           Box current_key = { .height = yh, .width = xw, .x = x_off, .y = y_off };
           colorizeBox(tui, current_key, COLORS[i], 0, ' ');
           renderStrToBuffer(tui->frame_buffer, x_off+5, y_off, acct->name.bytes, screen_dimensions);
-
-          if (i % 2 == 0) {
-            x_off += 20;
-          } else if (i % 2 == 1) {
-            y_off += 3;
-            x_off = original_x_off;
-          }
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "$%d", acct->ship.remaining_mortgage);
+          renderStrToBuffer(tui->frame_buffer, x_off+5, y_off+1, sbuf, screen_dimensions);
         }
       }
 
@@ -1337,7 +1335,7 @@ i32 main(i32 argc, ptr argv[]) {
   osInit();
   // multi-thread architecture:
   //  - the gameLoop() which just inifinite loops every "tick" and processes user input and updates gameworld state
-  //    - TODO: actually make this N "lanes" as described https://www.rfleury.com/p/multi-core-by-default
+  //    - this is N "lanes" as described https://www.rfleury.com/p/multi-core-by-default
   //      such that we can split room-work among all the various cores on our machine
   //  - one is the sendNetworkUpdates() infinite loop, which sends a UDP snapshot-or-delta update to each connected client N/sec
   //  - one is the receiveNetworkUpdates() infinte loop, which waits for new UDP messages from clients
@@ -1417,8 +1415,8 @@ i32 main(i32 argc, ptr argv[]) {
         p->production[iii] = 1 + (rand() % COMMODITIES[iii].consumption);
       }
       // everyone starts with "a lot" of fuel and o2
-      p->commodities[CommodityHydrogenFuel] = COMMODITIES[CommodityHydrogenFuel].qty * 2;
-      p->commodities[CommodityOxygen] = COMMODITIES[CommodityOxygen].qty * 2;
+      p->commodities[CommodityHydrogenFuel] = COMMODITIES[CommodityHydrogenFuel].qty;
+      p->commodities[CommodityOxygen] = COMMODITIES[CommodityOxygen].qty;
       // now, override for the "specialty" of the planet
       switch (p->type) {
         case PlanetTypeEarth: {

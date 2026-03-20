@@ -1139,8 +1139,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           for (u32 i = 0; i < Commodity_Count; i++) {
             if (i == CommodityOxygen || i == CommodityHydrogenFuel || state->me.commodities[i] > 0) {
               MemoryZero(sbuf, SBUFLEN);
-              sprintf(sbuf, "%-42s %d", COMMODITIES[i].name, state->me.commodities[i]);
-              renderStrToBuffer(tui->frame_buffer, box.x+4, yoff+3+i, sbuf, screen_dimensions);
+              sprintf(sbuf, "%-18s %d", COMMODITIES[i].name, state->me.commodities[i]);
+              renderStrToBuffer(tui->frame_buffer, box.x+4, (++yoff)+3, sbuf, screen_dimensions);
             }
           }
 
@@ -1221,6 +1221,16 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           MemoryZero(sbuf, SBUFLEN);
           sprintf(sbuf, "Welcome to %s", curr.name);
           renderStrToBuffer(tui->frame_buffer, box.x+((screen_dimensions.width - strlen(sbuf))/2), line++, sbuf, screen_dimensions);
+
+          if (state->market_tab_state == MarketTabStateComparisonTable) {
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "(press ESC to view Commodities list)");
+            renderStrToBuffer(tui->frame_buffer, box.x+((screen_dimensions.width - strlen(sbuf))/2), line++, sbuf, screen_dimensions);
+          } else {
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "(press SPACE to compare prices)");
+            renderStrToBuffer(tui->frame_buffer, box.x+((screen_dimensions.width - strlen(sbuf))/2), line++, sbuf, screen_dimensions);
+          }
 
           // the table
           TableDrawInfo info = {

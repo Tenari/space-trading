@@ -183,11 +183,11 @@ global Commodity COMMODITIES[Commodity_Count] = {
   },
   { .type = CommodityHandTools,  .unit = StorageUnitContainer,
     .name = "Hand Tools",
-    .price = 20000, .qty = 5, .consumption = 1,
+    .price = 12000, .qty = 9, .consumption = 2,
   },
   { .type = CommodityElectronics,  .unit = StorageUnitContainer,
     .name = "Electronics",
-    .price = 40000, .qty = 40, .consumption = 6,
+    .price = 21000, .qty = 20, .consumption = 3,
   },
 };
 
@@ -404,7 +404,7 @@ static const char* MESSAGE_STRINGS[] = {
 fn u32 fuelCostForTravel(u32 drive_efficiency, Pos2 current, Pos2 dest) {
   u32 x_distance = Max(current.x, dest.x) - Min(current.x, dest.x);
   u32 y_distance = Max(current.y, dest.y) - Min(current.y, dest.y);
-  u32 fuel_per_dist = 100 - drive_efficiency*10;
+  u32 fuel_per_dist = 100 - drive_efficiency*5;
   return (x_distance + y_distance) * fuel_per_dist;
 }
 
