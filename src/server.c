@@ -670,6 +670,7 @@ fn void* gameLoop(void* params) {
         Client* client = &state.clients.items[client_handle];
         switch (msg.type) {
           case CommandAcceptPassengerJob: {
+            if (client_handle == 0) break;
             // move the offer out of the system and INTO the PlayerShip
             Account* account = &state.accounts[client->account_id];
             StarSystem* player_sys = &state.map[account->ship.system_idx];
@@ -710,6 +711,7 @@ fn void* gameLoop(void* params) {
             }
           } break;
           case CommandPayMortgage: {
+            if (client_handle == 0) break;
             Account* account = &state.accounts[client->account_id];
             u32 amount_to_pay = msg.id;
             if (amount_to_pay > account->ship.credits) {
@@ -724,10 +726,12 @@ fn void* gameLoop(void* params) {
             sendMessagePayoffResult(sender);
           } break;
           case CommandSetDestination: {
+            if (client_handle == 0) break;
             Account* account = &state.accounts[client->account_id];
             account->destination_sys_idx = msg.byte;
           } break;
           case CommandReadyStatus: {
+            if (client_handle == 0) break;
             Account* account = &state.accounts[client->account_id];
             account->ship.ready_to_depart = msg.byte;
             sendMessagePlayerDetails(account->ship, sender);
@@ -741,6 +745,7 @@ fn void* gameLoop(void* params) {
             }
           } break;
           case CommandTransact: {
+            if (client_handle == 0) break;
             MemoryZero(sbuf, SBUFLEN);
             sprintf(sbuf, "Transact for client_handle=%d, on #%lld", client_handle, state.frame);
             addSystemMessage((u8*)sbuf);
@@ -797,8 +802,17 @@ fn void* gameLoop(void* params) {
             sendMessageTransactionResult(sender, qty_traded, is_buying_from_system, credit_value);
           } break;
           case CommandKeepAlive: {
-            dbg("KeepAlive for client_handle=%d, %ld", client_handle, state.frame);
-            state.clients.items[client_handle].last_ping = state.frame;
+            //MemoryZero(sbuf, SBUFLEN);
+            //sprintf(sbuf, "KeepAlive for client_handle=%d on frame %lld", client_handle, state.frame);
+            //addSystemMessage((u8*)sbuf);
+            if (client_handle == 0) {
+              outgoing_message.bytes[0] = (u8)MessageNotAlive;
+              outgoing_message.bytes_len = 1;
+              outgoing_message.address = sender;
+              outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+            } else {
+              state.clients.items[client_handle].last_ping = state.frame;
+            }
           } break;
           case CommandLogin: {
             if (client_handle == 0) {
@@ -883,6 +897,7 @@ fn void* gameLoop(void* params) {
             addSystemMessage((u8*)sbuf);
           } break;
           case CommandCreateCharacter: {
+            if (client_handle == 0) break;
             Account* account = &state.accounts[client->account_id];
             MemoryZero(sbuf, SBUFLEN);
             sprintf(sbuf, "creating character for account id=%d, %s\n", account->id, SHIP_TYPE_STRINGS[msg.byte]);

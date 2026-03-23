@@ -336,6 +336,7 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     case MessagePayoffResult:
     case MessageTurnTick:
     case MessageNewAccountCreated:
+    case MessageNotAlive:
     case MessageBadPw: {/*nothing to parse but the type*/} break;
     case MessageGameOver: {
       parsed.byte = message[msg_pos++];
@@ -502,6 +503,26 @@ fn Box defaultModal(TuiState* tui) {
   return modal_outline;
 }
 
+fn void sendLoginCommand(SocketAddress addr, u16 client_port) {
+  u32 msg_idx = 0;
+  // drop the login message into the network_send_queue
+  UDPMessage msg = { .address = addr };
+  // 1. msg type/CommandType
+  msg.bytes[msg_idx++] = CommandLogin;
+  // 2. our LAN-IP to handle the case where we are on the same LAN as the guy we are trying to fight
+  // and our "listened" UDP port
+  msg_idx += writeU16ToBufferLE(msg.bytes + msg_idx, ~client_port);
+  msg_idx += writeI32ToBufferLE(msg.bytes + msg_idx, ~osLanIPAddress());
+  // 2. how long is the name
+  msg.bytes[msg_idx++] = state.login_state.name.length;
+  // 3. the name
+  memcpy(msg.bytes + msg_idx, state.login_state.name.bytes, state.login_state.name.length);
+  // 4. the password
+  memcpy(msg.bytes + msg_idx + state.login_state.name.length, state.login_state.password.bytes, state.login_state.password.length);
+  msg.bytes_len = msg_idx + state.login_state.name.length + state.login_state.password.length;
+  outgoingMessageQueuePush(network_send_queue, &msg);
+}
+
 fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count) {
   GameState* state = (GameState*) s;
   state->loop_count = loop_count;
@@ -524,6 +545,15 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   while (next_net_msg != NULL) {
     msg_iters += 0;
     switch (msg.type) {
+      case MessageNotAlive: {
+        // auto-re-login
+        if (state->me.base_cost > 0) {
+          addSystemMessage((u8*)"auto re logging in due to MessageNotAlive");
+          sendLoginCommand(udp->server_address, udp->client_port);
+          state->screen = ScreenLogin;
+          state->login_state.state = LoginScreenStateLoading;
+        }
+      } break;
       case MessageSystemPassengers: {
        // put the stuff from msg into the correct state.map[i]
        MemoryCopy(&state->map[msg.byte].offers, &msg.offers, sizeof(PassengerJobOffer) * MAX_PASSENGER_JOB_OFFERS);
@@ -846,17 +876,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       }
       Tab tab = state->menu.selected_index;
 
-      // per-tab simulation+rendering
-      u32 tabs_y = 1;
-      u32 tx = 2;
-      for (u32 i = 0; i < Tab_Count; i++) {
-        u32 tab_len = strlen(TAB_STRS[i]);
-        Box b = { .x = tx, .y = tabs_y, .width = tab_len+1, .height = 1 };
-        drawAnsiBox(tui->frame_buffer, b, screen_dimensions, state->menu.selected_index == i);
-        renderStrToBuffer(tui->frame_buffer, tx+1, tabs_y+ 1, TAB_STRS[i], screen_dimensions);
-        tx += (tab_len + 3);
-      }
       // draw the tabs box
+      u32 tabs_y = 0;
       u32 box_y = tabs_y + 3;
       Box box = {
         .x = 1,
@@ -865,6 +886,15 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         .height = screen_dimensions.height - box_y - 2,
       };
       drawAnsiBox(tui->frame_buffer, box, screen_dimensions, true);
+      u32 tx = 2;
+      // draw the actual tabs
+      for (u32 i = 0; i < Tab_Count; i++) {
+        u32 tab_len = strlen(TAB_STRS[i]);
+        Box b = { .x = tx, .y = tabs_y, .width = tab_len+1, .height = 1 };
+        drawAnsiBox(tui->frame_buffer, b, screen_dimensions, state->menu.selected_index == i);
+        renderStrToBuffer(tui->frame_buffer, tx+1, tabs_y+ 1, TAB_STRS[i], screen_dimensions);
+        tx += (tab_len + 3);
+      }
       StarSystem curr = state->map[state->me.system_idx];
       switch (tab) {
         case TabDebug: {
@@ -1137,9 +1167,20 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
 
           for (u32 i = 0; i < Commodity_Count; i++) {
-            if (i == CommodityOxygen || i == CommodityHydrogenFuel || state->me.commodities[i] > 0) {
+            bool is_o2_or_fuel = i == CommodityOxygen || i == CommodityHydrogenFuel;
+            if (is_o2_or_fuel || state->me.commodities[i] > 0) {
               MemoryZero(sbuf, SBUFLEN);
-              sprintf(sbuf, "%-18s %d", COMMODITIES[i].name, state->me.commodities[i]);
+              if (is_o2_or_fuel) {
+                sprintf(
+                  sbuf,
+                  "%-18s %d / %dkg",
+                  COMMODITIES[i].name,
+                  state->me.commodities[i],
+                  i == CommodityHydrogenFuel ? state->me.cu_m_fuel : state->me.cu_m_o2
+                );
+              } else {
+                sprintf(sbuf, "%-18s %d", COMMODITIES[i].name, state->me.commodities[i]);
+              }
               renderStrToBuffer(tui->frame_buffer, box.x+4, (++yoff)+3, sbuf, screen_dimensions);
             }
           }
@@ -1602,28 +1643,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           state->login_state.selected_field = 1;
           state->login_state.field_index = 0;
         } else {
-          u32 msg_idx = 0;
-          // drop the login message into the network_send_queue
-          UDPMessage msg = {0};
-          msg.address = udp->server_address;
-          // 1. msg type/CommandType
-          msg.bytes[msg_idx++] = CommandLogin;
-          // 2. our LAN-IP to handle the case where we are on the same LAN as the guy we are trying to fight
-          // and our "listened" UDP port
-          msg_idx += writeU16ToBufferLE(msg.bytes + msg_idx, ~(udp->client_port));
-          msg_idx += writeI32ToBufferLE(msg.bytes + msg_idx, ~osLanIPAddress());
-          // 2. how long is the name
-          msg.bytes[msg_idx++] = state->login_state.name.length;
-          // 3. the name
-          memcpy(msg.bytes + msg_idx, state->login_state.name.bytes, state->login_state.name.length);
-          // 4. the password
-          memcpy(msg.bytes + msg_idx + state->login_state.name.length, state->login_state.password.bytes, state->login_state.password.length);
-          msg.bytes_len = msg_idx + state->login_state.name.length + state->login_state.password.length;
-          addSystemMessage((u8*)state->login_state.name.bytes);
-          addSystemMessage((u8*)state->login_state.password.bytes);
-          outgoingMessageQueuePush(network_send_queue, &msg);
+          sendLoginCommand(udp->server_address, udp->client_port);
           // show loading signal, stop accepting input
           state->login_state.state = LoginScreenStateLoading;
+          addSystemMessage((u8*)state->login_state.name.bytes);
+          addSystemMessage((u8*)state->login_state.password.bytes);
         }
       }
 

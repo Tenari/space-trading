@@ -381,6 +381,7 @@ typedef enum Message {
   MessageSystemPassengers,
   MessageJobAcceptResult,
   MessageJobComplete,
+  MessageNotAlive,
   Message_Count,
 } Message;
 
@@ -398,6 +399,7 @@ static const char* MESSAGE_STRINGS[] = {
   "PayoffResult",
   "SystemPassengers",
   "JobAcceptResult",
+  "MessageNotAlive",
 };
 
 ///// shared helper functions
