@@ -7,14 +7,16 @@
 ///// #define some game-tunable constants
 #define STARTING_DOWN_PAYMENT (10000)
 #define SHIP_DETAIL_COUNT (8)
-#define STAR_SYSTEM_COUNT (16)
-#define MAP_WIDTH (32)
+#define STAR_SYSTEM_COUNT (6)
+#define MAP_WIDTH (28)
 #define MAP_HEIGHT (12)
 #define MAX_PLANETS (3)
-#define MAX_PASSENGER_JOB_OFFERS (16)
+#define MAX_PASSENGER_JOB_OFFERS (12)
 #define MAX_PASSENGER_JOB_PEOPLE (4)
 #define MAX_PASSENGER_JOB_PRICE (10000)
 #define MAX_PASSENGER_BERTHS (8)
+#define AUCTION_COMMODITY_CUTOFF (6)
+#define AUCTION_PRICE_START_MULTIPLE (12)
 
 typedef enum ShipType {
   ShipSparrow,
@@ -252,8 +254,8 @@ typedef struct PlayerShip {
   u32 base_cost;
   u32 remaining_mortgage;
   f32 interest_rate;
-  u32 cu_m_fuel; // we are just saying you can buy as much fuel as you want
-  u32 cu_m_o2; // we are just saying you can buy as much o2 as you want
+  u32 cu_m_fuel;
+  u32 cu_m_o2;
   u32 credits;
   u64 id;
   u32 commodities[Commodity_Count];
@@ -276,6 +278,14 @@ typedef struct Planet {
   u32 production[Commodity_Count];
 } Planet;
 
+typedef struct Auction {
+  CommodityType type;
+  u8 qty;
+  u32 price;
+  u32 started_at;
+  u32 finished_at;
+} Auction;
+
 typedef struct StarSystem {
   bool changed;
   u32 x;
@@ -285,26 +295,27 @@ typedef struct StarSystem {
   str name;
   Planet planets[MAX_PLANETS];
   PassengerJobOffer offers[MAX_PASSENGER_JOB_OFFERS];
+  Auction auction;
 } StarSystem;
 
 global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
   "Vega",
   "Aldebaran",
   "Mining Colony 17",
-  "Antares",
+  "Centauri Prime",
   "Mintaka",
   "Barnard's Star",
-  "Betelgeuse",
+/*  "Betelgeuse",
+  "Antares",
   "Tau Ceti",
   "Capella",
   "Castor",
-  "Centauri Prime",
   "Deneb",
   "Epsilon Eridani",
   "Fomalhaut",
   "Gliese 581",
   "Hadar",
-/*  "Izar",
+  "Izar",
   "Achernar",
   "Kepler-186",
   "Lacaille 8760",
@@ -352,6 +363,7 @@ typedef enum CommandType {
   CommandSetDestination,
   CommandPayMortgage,
   CommandAcceptPassengerJob,
+  CommandBuyAuction,
   CommandType_Count,
 } CommandType;
 
@@ -364,6 +376,7 @@ static const char* command_type_strings[CommandType_Count] = {
   "SetDestination",
   "PayMortgage",
   "AcceptPassengerJob",
+  "BuyAuction",
 };
 
 typedef enum Message {
@@ -382,6 +395,7 @@ typedef enum Message {
   MessageJobAcceptResult,
   MessageJobComplete,
   MessageNotAlive,
+  MessageAuctionDetails,
   Message_Count,
 } Message;
 
@@ -399,7 +413,8 @@ static const char* MESSAGE_STRINGS[] = {
   "PayoffResult",
   "SystemPassengers",
   "JobAcceptResult",
-  "MessageNotAlive",
+  "NotAlive",
+  "AuctionDetails",
 };
 
 ///// shared helper functions
@@ -445,7 +460,7 @@ fn f32 priceForCommodity(CommodityType type, u32 quantity, bool bid) {
 }
 
 fn f32 calcInterestRate(u32 cost, u32 down_payment) {
-  return 3.0;
+  return 4.0;
   //f32 mortgage_rate = 10.0 *(1.0 - (3.0*(f32)down_payment / ((f32)cost/3.0)));
   //return mortgage_rate;
 }

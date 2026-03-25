@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/random.h>
+#include <math.h>
 #include "shared.h"
 #include "base/impl.c"
 #define NET_OUTGOING_MESSAGE_QUEUE_LEN 64
@@ -284,6 +285,14 @@ fn u32 starSystemPlanetCount(StarSystem* sys) {
     }
   }
   return planet_count;
+}
+
+fn bool accountIsEmpty(Account* a) {
+  return a->id == 0 && a->name.length == 0;
+}
+
+fn bool shipIsNull(PlayerShip* ship) {
+  return ship->id == 0 && ship->base_cost == 0;
 }
 
 fn UDPMessage makeMessageSystemPassengers(StarSystem* sys) {
@@ -562,6 +571,26 @@ fn void* sendNetworkUpdates(void* sock) {
           sendUDPu8List(socket, &client.address, &sys_msg);
           // and the passenger offers
           sendUDPu8List(socket, &client.address, &sys_pass_msg);
+
+          // send the client the current auction details for their current system
+          Account* account = &state.accounts[client.account_id];
+          if (!accountIsEmpty(account)) {
+            StarSystem curr = state.map[account->ship.system_idx];
+            MemoryZero(sbuf, SBUFLEN);
+            u32 msgidx = 0;
+            sbuf[msgidx++] = MessageAuctionDetails;
+            sbuf[msgidx++] = curr.auction.type;
+            sbuf[msgidx++] = curr.auction.qty;
+            msgidx += writeU32ToBufferLE((u8*)sbuf + msgidx, curr.auction.price);
+            msgidx += writeU32ToBufferLE((u8*)sbuf + msgidx, curr.auction.started_at);
+            msgidx += writeU32ToBufferLE((u8*)sbuf + msgidx, curr.auction.finished_at);
+            u8List msg = {
+              .capacity = UDP_MAX_MESSAGE_LEN,
+              .items = (u8*)sbuf,
+              .length = msgidx,
+            };
+            sendUDPu8List(socket, &client.address, &msg);
+          }
         }
 
         // update all the changed systems
@@ -619,14 +648,6 @@ fn void* sendNetworkUpdates(void* sock) {
     }
   }
   return NULL;
-}
-
-fn bool accountIsEmpty(Account* a) {
-  return a->id == 0 && a->name.length == 0;
-}
-
-fn bool shipIsNull(PlayerShip* ship) {
-  return ship->id == 0 && ship->base_cost == 0;
 }
 
 fn void* gameLoop(void* params) {
@@ -1003,6 +1024,27 @@ fn void* gameLoop(void* params) {
       }
     }
 
+    // tick all the star systems (auctions)
+    StarSystem* sys = NULL;
+    Range1u64 sys_range = LaneRange(STAR_SYSTEM_COUNT);
+    for (u32 i = sys_range.min; i < sys_range.max; i++) {
+      sys = &state.map[i];
+
+      // tick the auction price
+      u32 grace_period_ends_at = sys->auction.started_at + (GOAL_GAME_LOOPS_PER_S * 3);
+      bool is_auction_still_running = sys->auction.finished_at == 0;
+      bool is_auction_grace_period_finished = state.frame > grace_period_ends_at;
+      if (is_auction_still_running && is_auction_grace_period_finished) {
+        f32 initial_price = COMMODITIES[sys->auction.type].price * AUCTION_PRICE_START_MULTIPLE;
+        f32 t_sec = ((f32)state.frame - (f32)grace_period_ends_at) / (f32)GOAL_GAME_LOOPS_PER_S;
+        // t is in minutes
+        f32 t = t_sec / 60;
+        f32 decay = -0.30 * t;
+        f32 floor_price = COMMODITIES[sys->auction.type].price * 0.9;
+        sys->auction.price = Max((initial_price * pow(EULERS_E, decay)), floor_price);
+      }
+    }
+
     // 2. tick non-user entities
     if (state.all_accounts_ready) {
       addSystemMessage((u8*)"NEW TURN: ticking all_accounts_ready");
@@ -1012,7 +1054,7 @@ fn void* gameLoop(void* params) {
       for (u32 i = sys_range.min; i < sys_range.max; i++) {
         sys = &state.map[i];
         sys->changed = true;
-        // consume and produce commodities
+        // 1. consume and produce commodities
         for (u32 ii = 0; ii < Commodity_Count; ii++) {
           for (u32 iii = 0; iii < MAX_PLANETS; iii++) {
             if (sys->planets[iii].type != PlanetTypeNull) {
@@ -1025,7 +1067,8 @@ fn void* gameLoop(void* params) {
             }
           }
         }
-        // potentially create a new passenger job
+
+        // 2. potentially create a new passenger job
         u32 planet_divisor = ((MAX_PLANETS - starSystemPlanetCount(sys))+1);
         u32 max_passenger_job_count = 1 + ((MAX_PASSENGER_JOB_OFFERS-1) / planet_divisor);
         for (u32 ii = 0; ii < max_passenger_job_count; ii++) {
@@ -1041,6 +1084,13 @@ fn void* gameLoop(void* params) {
             sys->offers[ii].offer = (u32)((f32)sys->offers[ii].offer * 1.05);
           }
         }
+
+        // 3. reset the auction
+        MemoryZero(&sys->auction, sizeof(Auction));
+        sys->auction.started_at = state.frame;
+        sys->auction.type = AUCTION_COMMODITY_CUTOFF + (rand() % (Commodity_Count - AUCTION_COMMODITY_CUTOFF));
+        sys->auction.price = COMMODITIES[sys->auction.type].price * AUCTION_PRICE_START_MULTIPLE;
+        sys->auction.qty = COMMODITIES[sys->auction.type].consumption;
       }
 
       Range1u64 ship_range = LaneRange(player_count);
@@ -1420,6 +1470,12 @@ i32 main(i32 argc, ptr argv[]) {
   // now, build out the commodity info and passenger jobs for the systems
   char sbuf[SBUFLEN] = {0};
   for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
+    // setup the auction
+    state.map[i].auction.started_at = state.frame;
+    state.map[i].auction.type = AUCTION_COMMODITY_CUTOFF + (rand() % (Commodity_Count - AUCTION_COMMODITY_CUTOFF));
+    state.map[i].auction.price = COMMODITIES[state.map[i].auction.type].price * AUCTION_PRICE_START_MULTIPLE;
+    state.map[i].auction.qty = COMMODITIES[state.map[i].auction.type].consumption;
+    // setup the planets
     u32 planet_count = rand() % MAX_PLANETS + 1;
     for (u32 ii = 0; ii < planet_count; ii++) {
       Planet* p = &state.map[i].planets[ii];

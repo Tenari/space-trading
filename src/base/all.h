@@ -503,6 +503,8 @@ global const u64 MAX_u64 = 0xffffffffffffffffull;
 global const u32 MAX_u32 = 0xffffffff;
 global const u16 MAX_u16 = 0xffff;
 global const u8  MAX_u8  = 0xff;
+#define EULERS_E (2.71828)
+#define PI (3.14159265358979323846)
 
 ///// CUSTOM ENTRY POINT
 /* TODO?

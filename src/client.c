@@ -30,9 +30,9 @@
 ///// TYPES
 typedef enum Tab {
   TabDebug,
-//  TabChat,
   TabMap,
   TabShip,
+  TabAuction,
   TabMarket,
   TabPassengers,
   Tab_Count,
@@ -61,6 +61,13 @@ typedef enum PassengersTabStates {
   PassengersTabStateResult,
   PassengersTabStates_Count,
 } PassengersTabStates;
+
+typedef enum AuctionTabStates {
+  AuctionTabStateMain,
+  AuctionTabStateLoading,
+  AuctionTabStateResult,
+  AuctionTabStates_Count,
+} AuctionTabStates;
 
 typedef enum Screen {
   ScreenLogin,
@@ -165,6 +172,7 @@ typedef struct GameState {
   MarketTabStates market_tab_state;
   ShipTabStates ship_tab_states;
   PassengersTabStates passenger_tab_state;
+  AuctionTabStates auction_tab_state;
   bool passenger_job_accepted;
   TransactionResult tx_result;
   u64 turn_tick_started_on;
@@ -179,7 +187,7 @@ global u8 system_message_index = 0;
 global GameState state = {0};
 global OutgoingMessageQueue* network_send_queue = {0};
 global ParsedServerMessageThreadQueue* network_recv_queue = {0};
-global str TAB_STRS[Tab_Count] = {"Debug", /*"Chat",*/ "Map", "Ship", "Market", "Passengers"};
+global str TAB_STRS[Tab_Count] = {"Debug", "Map", "Ship", "Auction", "Market", "Passengers"};
 global FieldDescriptor COMPARE_COMMODITY_FIELDS[STAR_SYSTEM_COUNT] = {
   { "System", FieldTypeString, offsetof(CompareCommodity, system_name), 16 },
   { "Bid", FieldTypeU32, offsetof(CompareCommodity, bid), 6 },
@@ -306,6 +314,8 @@ fn void resetTabRow(Tab tab) {
     state.row.selected_index = 0;
     state.modal_choice.selected_index = 0;
     state.modal_choice.len = 2;
+  } else if (state.menu.selected_index == TabAuction) {
+    state.auction_tab_state = AuctionTabStateMain;
   }
 }
 
@@ -340,6 +350,16 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     case MessageBadPw: {/*nothing to parse but the type*/} break;
     case MessageGameOver: {
       parsed.byte = message[msg_pos++];
+    } break;
+    case MessageAuctionDetails: {
+      parsed.sys.auction.type = message[msg_pos++];
+      parsed.sys.auction.qty = message[msg_pos++];
+      parsed.sys.auction.price = readU32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+      parsed.sys.auction.started_at = readU32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
+      parsed.sys.auction.finished_at = readU32FromBufferLE(message + msg_pos);
+      msg_pos += 4;
     } break;
     case MessageJobComplete: {
       parsed.byte = message[msg_pos++];
@@ -628,6 +648,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
         }
       } break;
+      case MessageAuctionDetails: {
+        u32 sys_idx = state->me.system_idx;
+        StarSystem* sys = &state->map[sys_idx];
+        sys->auction = msg.sys.auction;
+      } break;
       case MessageSystemCommodities: {
         u32 sys_idx = msg.id;
         StarSystem* sys = &state->map[sys_idx];
@@ -878,7 +903,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
 
       // draw the tabs box
       u32 tabs_y = 0;
-      u32 box_y = tabs_y + 3;
+      u32 box_y = tabs_y + 2;
       Box box = {
         .x = 1,
         .y = box_y,
@@ -903,9 +928,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
           renderSystemMessages(tui->frame_buffer, tui->screen_dimensions, box);
         } break;
-        /*case TabChat: {
-          renderStrToBuffer(tui->frame_buffer, box.x+2, box.y+1, "You haven't heard anything interesting lately...", screen_dimensions);
-        } break;*/
         case TabMap: {
           if (user_pressed_up) {
             state->pos.y -= 1;
@@ -1248,6 +1270,54 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             renderStrToBuffer(tui->frame_buffer, modal_outline.x+2, y_off, "Loading...", screen_dimensions);
           }
         } break;
+       case TabAuction: {
+          u32 yoff = box.y+1;
+          renderStrToBuffer(tui->frame_buffer, box.x+((box.width - 13)/2), yoff++, "Auction House", screen_dimensions);
+          yoff++;
+
+          if (curr.auction.finished_at > curr.auction.started_at) {
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "Sold! %d containers of %s were sold for $%d", curr.auction.qty, COMMODITY_STRINGS[curr.auction.type], curr.auction.price);
+            renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+          } else if (state->auction_tab_state == AuctionTabStateMain) {
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "Commodity up for Auction: %s", COMMODITY_STRINGS[curr.auction.type]);
+            renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "Offering %d containers", curr.auction.qty);
+            renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+            yoff++;
+
+            MemoryZero(sbuf, SBUFLEN);
+            sprintf(sbuf, "Current price: %d", curr.auction.price);
+            renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
+            yoff++;
+
+            const char* label = "ACCEPT OFFER [ENTER]";
+            Range1u32 range = {
+              .min = XYToPos(box.x+6, yoff, screen_dimensions.width),
+              .max = XYToPos(box.x+6+strlen(label), yoff, screen_dimensions.width),
+            };
+            tui->cursor.x = box.x+6;
+            tui->cursor.y = yoff;
+            colorizeRange(tui, range, ANSI_WHITE, ANSI_BLACK);
+            renderStrToBuffer(tui->frame_buffer, box.x+6, yoff++, label, screen_dimensions);
+            if (user_pressed_enter) {
+              // send the "buy this auction" message to the server
+              u32 msg_idx = 0;
+              UDPMessage msg = {0};
+              msg.address = udp->server_address;
+              msg.bytes[msg_idx++] = CommandBuyAuction;
+              msg.bytes_len = msg_idx;
+              outgoingMessageQueuePush(network_send_queue, &msg);
+
+              state->auction_tab_state = AuctionTabStateLoading;
+            }
+          } else if (state->auction_tab_state == AuctionTabStateLoading) {
+          renderStrToBuffer(tui->frame_buffer, box.x+((box.width - 13)/2), yoff++, "Bid submitted...", screen_dimensions);
+          }
+       } break;
         case TabMarket: {
           if (input_buffer[0] == 'q' || user_pressed_esc) {
             state->market_tab_state = MarketTabStateTable;
