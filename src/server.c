@@ -1059,23 +1059,25 @@ fn void* gameLoop(void* params) {
     }
 
     // tick all the star systems (auctions)
-    StarSystem* sys = NULL;
-    Range1u64 sys_range = LaneRange(STAR_SYSTEM_COUNT);
-    for (u32 i = sys_range.min; i < sys_range.max; i++) {
-      sys = &state.map[i];
+    if (player_count > 0) { // don't bother until there's actually a player
+      StarSystem* sys = NULL;
+      Range1u64 sys_range = LaneRange(STAR_SYSTEM_COUNT);
+      for (u32 i = sys_range.min; i < sys_range.max; i++) {
+        sys = &state.map[i];
 
-      // tick the auction price
-      u32 grace_period_ends_at = sys->auction.started_at + (GOAL_GAME_LOOPS_PER_S * 3);
-      bool is_auction_still_running = sys->auction.finished_at == 0;
-      bool is_auction_grace_period_finished = state.frame > grace_period_ends_at;
-      if (is_auction_still_running && is_auction_grace_period_finished) {
-        f32 initial_price = COMMODITIES[sys->auction.type].price * AUCTION_PRICE_START_MULTIPLE;
-        f32 t_sec = ((f32)state.frame - (f32)grace_period_ends_at) / (f32)GOAL_GAME_LOOPS_PER_S;
-        // t is in minutes
-        f32 t = t_sec / 60;
-        f32 decay = -0.50 * t;
-        f32 floor_price = COMMODITIES[sys->auction.type].price * 0.9;
-        sys->auction.price = Max((initial_price * pow(EULERS_E, decay)), floor_price);
+        // tick the auction price
+        u32 grace_period_ends_at = sys->auction.started_at + (GOAL_GAME_LOOPS_PER_S * 3);
+        bool is_auction_still_running = sys->auction.finished_at == 0;
+        bool is_auction_grace_period_finished = state.frame > grace_period_ends_at;
+        if (is_auction_still_running && is_auction_grace_period_finished) {
+          f32 initial_price = COMMODITIES[sys->auction.type].price * AUCTION_PRICE_START_MULTIPLE;
+          f32 t_sec = ((f32)state.frame - (f32)grace_period_ends_at) / (f32)GOAL_GAME_LOOPS_PER_S;
+          // t is in minutes
+          f32 t = t_sec / 60;
+          f32 decay = -0.50 * t;
+          f32 floor_price = COMMODITIES[sys->auction.type].price * 0.9;
+          sys->auction.price = Max((initial_price * pow(EULERS_E, decay)), floor_price);
+        }
       }
     }
 

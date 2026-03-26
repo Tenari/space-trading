@@ -1753,7 +1753,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       } else {
         field = &state->login_state.password;
       }
-      if (isAlphaUnderscoreSpace(input_buffer[0])) {
+      if (isAlphaUnderscoreSpace(input_buffer[0]) || user_pressed_a_number) {
         field->bytes[state->login_state.field_index] = input_buffer[0];
         if (state->login_state.field_index+1 < field->capacity) {
           state->login_state.field_index += 1;
@@ -1765,7 +1765,15 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           state->login_state.field_index -= 1;
           field->length -= 1;
         }
-      } else if (input_buffer[0] == ASCII_RETURN || input_buffer[0] == ASCII_LINE_FEED) {
+      } else if (user_pressed_tab) {
+        state->login_state.selected_field = state->login_state.selected_field == 0 ? 1 : 0;
+        if (state->login_state.selected_field == 0) {
+          field = &state->login_state.name;
+        } else {
+          field = &state->login_state.password;
+        }
+        state->login_state.field_index = field->length;
+      } else if (user_pressed_enter) {
         if (state->login_state.selected_field == 0) {
           state->login_state.selected_field = 1;
           state->login_state.field_index = 0;
