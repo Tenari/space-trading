@@ -342,6 +342,14 @@ global str STAR_NAMES[STAR_SYSTEM_COUNT] = {
 */
 };
 
+typedef enum AuctionBidResult {
+  AuctionBidResultPurchased,
+  AuctionBidResultNotEnoughMoney,
+  AuctionBidResultNotEnoughCargoSpace,
+  AuctionBidResultAuctionAlreadyFinished,
+  AuctionBidResult_Count
+} AuctionBidResult;
+
 typedef enum Direction {
   DirectionInvalid,
   North,
@@ -396,6 +404,7 @@ typedef enum Message {
   MessageJobComplete,
   MessageNotAlive,
   MessageAuctionDetails,
+  MessageAuctionBidResult,
   Message_Count,
 } Message;
 
@@ -415,6 +424,7 @@ static const char* MESSAGE_STRINGS[] = {
   "JobAcceptResult",
   "NotAlive",
   "AuctionDetails",
+  "AuctionBidResult",
 };
 
 ///// shared helper functions

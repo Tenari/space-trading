@@ -65,6 +65,9 @@ typedef enum PassengersTabStates {
 typedef enum AuctionTabStates {
   AuctionTabStateMain,
   AuctionTabStateLoading,
+  AuctionTabStateNotEnoughMoney,
+  AuctionTabStateNotEnoughCargoSpace,
+  AuctionTabStateAlreadyFinished,
   AuctionTabStateResult,
   AuctionTabStates_Count,
 } AuctionTabStates;
@@ -348,6 +351,7 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     case MessageNewAccountCreated:
     case MessageNotAlive:
     case MessageBadPw: {/*nothing to parse but the type*/} break;
+    case MessageAuctionBidResult: // same as GameOver
     case MessageGameOver: {
       parsed.byte = message[msg_pos++];
     } break;
@@ -565,6 +569,26 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
   while (next_net_msg != NULL) {
     msg_iters += 0;
     switch (msg.type) {
+      case MessageAuctionBidResult: {
+        AuctionBidResult result = msg.byte;
+        switch (result) {
+          case AuctionBidResultNotEnoughMoney:
+            state->auction_tab_state = AuctionTabStateNotEnoughMoney;
+            break;
+          case AuctionBidResultNotEnoughCargoSpace:
+            state->auction_tab_state = AuctionTabStateNotEnoughCargoSpace;
+            break;
+          case AuctionBidResultPurchased:
+            state->auction_tab_state = AuctionTabStateResult;
+            break;
+          case AuctionBidResultAuctionAlreadyFinished:
+            state->auction_tab_state = AuctionTabStateAlreadyFinished;
+            break;
+          case AuctionBidResult_Count:
+            assert(false && "unhandled message result");
+            break;
+        }
+      } break;
       case MessageNotAlive: {
         // auto-re-login
         if (state->me.base_cost > 0) {
@@ -1272,10 +1296,20 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         } break;
        case TabAuction: {
           u32 yoff = box.y+1;
+          drawStatusLine(tui, sbuf, &state->me, box.x+2, yoff);
+          yoff++;
+
           renderStrToBuffer(tui->frame_buffer, box.x+((box.width - 13)/2), yoff++, "Auction House", screen_dimensions);
           yoff++;
 
           if (curr.auction.finished_at > curr.auction.started_at) {
+            if (state->auction_tab_state == AuctionTabStateResult) {
+              renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, "Your bid was accepted", screen_dimensions);
+              yoff++;
+            } else if (state->auction_tab_state == AuctionTabStateAlreadyFinished) {
+              renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, "Your bid was too late..", screen_dimensions);
+              yoff++;
+            }
             MemoryZero(sbuf, SBUFLEN);
             sprintf(sbuf, "Sold! %d containers of %s were sold for $%d", curr.auction.qty, COMMODITY_STRINGS[curr.auction.type], curr.auction.price);
             renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
@@ -1294,25 +1328,48 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
             yoff++;
 
-            const char* label = "ACCEPT OFFER [ENTER]";
-            Range1u32 range = {
-              .min = XYToPos(box.x+6, yoff, screen_dimensions.width),
-              .max = XYToPos(box.x+6+strlen(label), yoff, screen_dimensions.width),
-            };
-            tui->cursor.x = box.x+6;
-            tui->cursor.y = yoff;
-            colorizeRange(tui, range, ANSI_WHITE, ANSI_BLACK);
-            renderStrToBuffer(tui->frame_buffer, box.x+6, yoff++, label, screen_dimensions);
-            if (user_pressed_enter) {
-              // send the "buy this auction" message to the server
-              u32 msg_idx = 0;
-              UDPMessage msg = {0};
-              msg.address = udp->server_address;
-              msg.bytes[msg_idx++] = CommandBuyAuction;
-              msg.bytes_len = msg_idx;
-              outgoingMessageQueuePush(network_send_queue, &msg);
+            bool player_has_money_for_purchase = state->me.credits > curr.auction.price;
+            bool player_has_cargo_space_for_purchase = (state->me.vacuum_cargo_slots - usedVacuumCargoSlots(state->me)) > curr.auction.qty;
+            if (player_has_money_for_purchase && player_has_cargo_space_for_purchase) {
+              const char* label = "ACCEPT OFFER [ENTER]";
+              Range1u32 range = {
+                .min = XYToPos(box.x+6, yoff, screen_dimensions.width),
+                .max = XYToPos(box.x+6+strlen(label), yoff, screen_dimensions.width),
+              };
+              tui->cursor.x = box.x+6;
+              tui->cursor.y = yoff;
+              colorizeRange(tui, range, ANSI_WHITE, ANSI_BLACK);
+              renderStrToBuffer(tui->frame_buffer, box.x+6, yoff++, label, screen_dimensions);
+              if (user_pressed_enter) {
+                // send the "buy this auction" message to the server
+                u32 msg_idx = 0;
+                UDPMessage msg = {0};
+                msg.address = udp->server_address;
+                msg.bytes[msg_idx++] = CommandBuyAuction;
+                msg.bytes_len = msg_idx;
+                outgoingMessageQueuePush(network_send_queue, &msg);
 
-              state->auction_tab_state = AuctionTabStateLoading;
+                state->auction_tab_state = AuctionTabStateLoading;
+              }
+            } else {
+              if (!player_has_money_for_purchase) {
+                const char* no_money_label = "You do not have enough money";
+                Range1u32 range = {
+                  .min = XYToPos(box.x+6, yoff, screen_dimensions.width),
+                  .max = XYToPos(box.x+6+strlen(no_money_label), yoff, screen_dimensions.width),
+                };
+                colorizeRange(tui, range, ANSI_DULL_RED, ANSI_WHITE);
+                renderStrToBuffer(tui->frame_buffer, box.x+6, yoff++, no_money_label, screen_dimensions);
+              }
+              if (!player_has_cargo_space_for_purchase) {
+                const char* no_cargo_label = "You do not have enough cargo space";
+                Range1u32 range = {
+                  .min = XYToPos(box.x+6, yoff, screen_dimensions.width),
+                  .max = XYToPos(box.x+6+strlen(no_cargo_label), yoff, screen_dimensions.width),
+                };
+                colorizeRange(tui, range, ANSI_DULL_RED, ANSI_WHITE);
+                renderStrToBuffer(tui->frame_buffer, box.x+6, yoff++, no_cargo_label, screen_dimensions);
+              }
             }
           } else if (state->auction_tab_state == AuctionTabStateLoading) {
           renderStrToBuffer(tui->frame_buffer, box.x+((box.width - 13)/2), yoff++, "Bid submitted...", screen_dimensions);

@@ -419,6 +419,16 @@ fn void sendMessagePlayerDetails(PlayerShip ship, SocketAddress addr) {
   addSystemMessage((u8*)"MessagePlayerDetails sent");
 }
 
+fn void sendMessageAuctionBidResult(SocketAddress addr, AuctionBidResult result) {
+  UDPMessage outgoing_message = {.address = addr};
+  u32 msg_i = 0;
+  outgoing_message.bytes[msg_i++] = (u8)MessageAuctionBidResult;
+  outgoing_message.bytes[msg_i++] = result;
+  outgoing_message.bytes_len = msg_i;
+  outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
+  addSystemMessage((u8*)"Message AuctionBidResult sent");
+}
+
 fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 socket) {
   dbg("%d: %s from %s:%d\n", len, command_type_strings[message[0]], inet_ntoa(sender.sin_addr), sender.sin_port);
   char sbuf[SBUFLEN] = {0};
@@ -435,6 +445,7 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
     .capacity = 0,
   };
   switch (parsed.type) {
+    case CommandBuyAuction: break; // nothing to parse but the type
     case CommandLogin: {
       // parse the login command
       parsed.alt_port = ~readU16FromBufferLE(message + msg_idx);
@@ -690,6 +701,29 @@ fn void* gameLoop(void* params) {
         u32 client_handle = findClientHandleBySocketAddress(&state.clients, sender);
         Client* client = &state.clients.items[client_handle];
         switch (msg.type) {
+          case CommandBuyAuction: {
+            if (client_handle == 0) break;
+            Account* account = &state.accounts[client->account_id];
+            StarSystem* player_sys = &state.map[account->ship.system_idx];
+            bool is_auction_still_running = player_sys->auction.finished_at == 0;
+            if (is_auction_still_running) {
+              bool player_has_money_for_purchase = account->ship.credits >= player_sys->auction.price;
+              bool player_has_cargo_space_for_purchase = (account->ship.vacuum_cargo_slots - usedVacuumCargoSlots(account->ship)) >= player_sys->auction.qty;
+              if (player_has_cargo_space_for_purchase && player_has_money_for_purchase) {
+                player_sys->auction.finished_at = state.frame;
+                account->ship.credits -= player_sys->auction.price;
+                account->ship.commodities[player_sys->auction.type] += player_sys->auction.qty;
+                sendMessageAuctionBidResult(sender, AuctionBidResultPurchased);
+                sendMessagePlayerDetails(account->ship, sender);
+              } else if (!player_has_money_for_purchase) {
+                sendMessageAuctionBidResult(sender, AuctionBidResultNotEnoughMoney);
+              } else {
+                sendMessageAuctionBidResult(sender, AuctionBidResultNotEnoughCargoSpace);
+              }
+            } else {
+              sendMessageAuctionBidResult(sender, AuctionBidResultAuctionAlreadyFinished);
+            }
+          } break;
           case CommandAcceptPassengerJob: {
             if (client_handle == 0) break;
             // move the offer out of the system and INTO the PlayerShip
@@ -937,7 +971,7 @@ fn void* gameLoop(void* params) {
                 .base_cost = template.base_cost,
                 .remaining_mortgage = template.base_cost - STARTING_DOWN_PAYMENT,
                 .interest_rate = calcInterestRate(template.base_cost, STARTING_DOWN_PAYMENT),
-                .credits = 2000.0,
+                .credits = 20000.0,
                 .cu_m_fuel = template.cu_m_fuel,
                 .cu_m_o2 = template.cu_m_o2,
                 .id = account->id,
@@ -1039,7 +1073,7 @@ fn void* gameLoop(void* params) {
         f32 t_sec = ((f32)state.frame - (f32)grace_period_ends_at) / (f32)GOAL_GAME_LOOPS_PER_S;
         // t is in minutes
         f32 t = t_sec / 60;
-        f32 decay = -0.30 * t;
+        f32 decay = -0.50 * t;
         f32 floor_price = COMMODITIES[sys->auction.type].price * 0.9;
         sys->auction.price = Max((initial_price * pow(EULERS_E, decay)), floor_price);
       }
