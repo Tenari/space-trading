@@ -16,6 +16,9 @@
 #define MAX_PASSENGER_JOB_PRICE (10000)
 #define MAX_PASSENGER_BERTHS (8)
 #define AUCTION_COMMODITY_CUTOFF (7)
+#define MAX_SCREEN_HEIGHT 300
+#define MAX_SCREEN_WIDTH 800
+
 #define AUCTION_PRICE_START_MULTIPLE (12)
 
 typedef enum ShipType {
@@ -513,6 +516,26 @@ fn u32 oxyCostForTravel(PlayerShip* ship, Pos2 current, Pos2 dest) {
   u32 oxy_per_person_per_dist = 15 - ship->life_support_efficiency;
   // +1 because the pilot uses oxy as well
   return (x_distance + y_distance) * oxy_per_person_per_dist * (shipTotalPassengers(*ship) + 1);
+}
+
+fn str strForPlanet(PlanetType type) {
+  switch(type) {
+    case PlanetTypeNull:
+      return "  ";
+    case PlanetTypeAsteroid:
+      return "🪨";
+    case PlanetTypeEarth:
+      return "🌎";
+    case PlanetTypeGas:
+      return "🪐";
+    case PlanetTypeMoon:
+      return "🌘";
+    case PlanetTypeStation:
+      return "\xF0\x9F\x9B\xB0 ";
+    case PlanetType_Count:
+      assert(false && "this should never happen");
+      return "";
+  }
 }
 
 #endif //GAMESHARED_H

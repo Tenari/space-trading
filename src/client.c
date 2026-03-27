@@ -9,8 +9,9 @@
 #include <string.h>
 //#include <math.h>
 #include "base/impl.c"
+#include "shared.h"
 #include "lib/network.c"
-#include "render.c"
+#include "lib/tui.c"
 #include "string_chunk.c"
 //#include "assets/asset1.h"
 //#include "assets/asset2.h"
