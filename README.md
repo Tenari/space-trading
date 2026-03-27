@@ -47,7 +47,7 @@ All computers you will use to play must be connected to the same Wi-Fi network. 
 1. connect a computer to your main TV/projector screen. This will be your "server." Run the server binary
 2. you can press `TAB` on the server to switch between Debug and Map. Map is the main game-view.
 3. have each player run their `client` application. It will prompt them for the `Server IP Address`, which should be displayed in the top right corner of the server.
-4. Don't bother with secure passwords when logging. The password is just to prevent your brother from trying to login as you.
+4. Don't bother with secure passwords when logging in. The password is just to prevent your brother from trying to login as you.
 5. Wait until each player has selected their ship and sees the "Map" tab on their screen.
 6. Start playing!
 

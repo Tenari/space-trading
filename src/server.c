@@ -1074,7 +1074,7 @@ fn void* gameLoop(void* params) {
           f32 t_sec = ((f32)state.frame - (f32)grace_period_ends_at) / (f32)GOAL_GAME_LOOPS_PER_S;
           // t is in minutes
           f32 t = t_sec / 60;
-          f32 decay = -0.50 * t;
+          f32 decay = -0.60 * t;
           f32 floor_price = COMMODITIES[sys->auction.type].price * 0.9;
           sys->auction.price = Max((initial_price * pow(EULERS_E, decay)), floor_price);
         }
@@ -1513,9 +1513,50 @@ i32 main(i32 argc, ptr argv[]) {
     state.map[i].auction.qty = COMMODITIES[state.map[i].auction.type].consumption;
     // setup the planets
     u32 planet_count = rand() % MAX_PLANETS + 1;
+    switch (i) {
+      case 0:
+        addSystemMessage((u8*)"Vega Earth Gas");
+        planet_count = 2;
+        state.map[i].planets[0].type = PlanetTypeEarth;
+        state.map[i].planets[1].type = PlanetTypeGas;
+        break;
+      case 1:
+        addSystemMessage((u8*)"Aldebara Earth Earth Asteroid");
+        planet_count = 3;
+        state.map[i].planets[0].type = PlanetTypeEarth;
+        state.map[i].planets[1].type = PlanetTypeEarth;
+        state.map[i].planets[2].type = PlanetTypeAsteroid;
+        break;
+      case 2:
+        addSystemMessage((u8*)"Mining Colony 17 Asteroid");
+        planet_count = 1;
+        state.map[i].planets[0].type = PlanetTypeAsteroid;
+        break;
+      case 3:
+        planet_count = 2;
+        state.map[i].planets[0].type = PlanetTypeGas;
+        state.map[i].planets[1].type = PlanetTypeMoon;
+        break;
+      case 4:
+        planet_count = 3;
+        state.map[i].planets[0].type = PlanetTypeStation;
+        state.map[i].planets[1].type = PlanetTypeAsteroid;
+        state.map[i].planets[2].type = PlanetTypeAsteroid;
+        break;
+      case 5:
+        planet_count = 2;
+        state.map[i].planets[0].type = PlanetTypeStation;
+        state.map[i].planets[1].type = PlanetTypeMoon;
+        break;
+      default:
+        break;
+    }
     for (u32 ii = 0; ii < planet_count; ii++) {
       Planet* p = &state.map[i].planets[ii];
-      p->type = 1+(PlanetType)(rand() % (PlanetType_Count -1));
+      if (p->type == PlanetTypeNull) {
+        addSystemMessage((u8*)"random planet type");
+        p->type = 1+(PlanetType)(rand() % (PlanetType_Count -1));
+      }
       // default commodity + production roll
       for (u32 iii = 0; iii < Commodity_Count; iii++) {
         p->commodities[iii] = (COMMODITIES[iii].qty / 5) + (rand() % COMMODITIES[iii].qty);

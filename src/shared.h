@@ -15,7 +15,7 @@
 #define MAX_PASSENGER_JOB_PEOPLE (4)
 #define MAX_PASSENGER_JOB_PRICE (10000)
 #define MAX_PASSENGER_BERTHS (8)
-#define AUCTION_COMMODITY_CUTOFF (6)
+#define AUCTION_COMMODITY_CUTOFF (7)
 #define AUCTION_PRICE_START_MULTIPLE (12)
 
 typedef enum ShipType {
@@ -161,35 +161,35 @@ global Commodity COMMODITIES[Commodity_Count] = {
   },
   { .type = CommodityRawTextiles,  .unit = StorageUnitContainer,
     .name = "Raw Textiles",
-    .price = 500, .qty = 40, .consumption = 3,
+    .price = 400, .qty = 40, .consumption = 3,
   },
   { .type = CommodityOre,  .unit = StorageUnitContainer,
     .name = "Ore",
-    .price = 1000, .qty = 100, .consumption = 8,
+    .price = 600, .qty = 100, .consumption = 8,
   },
   { .type = CommodityPlastics,  .unit = StorageUnitContainer,
     .name = "Plastics",
-    .price = 2000, .qty = 30, .consumption = 5,
+    .price = 800, .qty = 30, .consumption = 5,
   },
   { .type = CommoditySemiConductors,  .unit = StorageUnitContainer,
     .name = "Semi-conductors",
-    .price = 4000, .qty = 40, .consumption = 3,
+    .price = 1000, .qty = 40, .consumption = 3,
   },
   { .type = CommodityMetals,  .unit = StorageUnitContainer,
     .name = "Metals",
-    .price = 5000, .qty = 40, .consumption = 3,
+    .price = 2000, .qty = 30, .consumption = 3,
   },
   { .type = CommodityGlass,  .unit = StorageUnitContainer,
     .name = "Glass",
-    .price = 9200, .qty = 50, .consumption = 5,
+    .price = 4000, .qty = 30, .consumption = 3,
   },
   { .type = CommodityHandTools,  .unit = StorageUnitContainer,
     .name = "Hand Tools",
-    .price = 12000, .qty = 9, .consumption = 2,
+    .price = 5000, .qty = 30, .consumption = 3,
   },
   { .type = CommodityElectronics,  .unit = StorageUnitContainer,
     .name = "Electronics",
-    .price = 21000, .qty = 20, .consumption = 3,
+    .price = 9000, .qty = 30, .consumption = 3,
   },
 };
 

@@ -1328,8 +1328,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             renderStrToBuffer(tui->frame_buffer, box.x+2, yoff++, sbuf, screen_dimensions);
             yoff++;
 
-            bool player_has_money_for_purchase = state->me.credits > curr.auction.price;
-            bool player_has_cargo_space_for_purchase = (state->me.vacuum_cargo_slots - usedVacuumCargoSlots(state->me)) > curr.auction.qty;
+            bool player_has_money_for_purchase = state->me.credits >= curr.auction.price;
+            bool player_has_cargo_space_for_purchase = (state->me.vacuum_cargo_slots - usedVacuumCargoSlots(state->me)) >= curr.auction.qty;
             if (player_has_money_for_purchase && player_has_cargo_space_for_purchase) {
               const char* label = "ACCEPT OFFER [ENTER]";
               Range1u32 range = {
@@ -1446,7 +1446,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               rows[i].type = c.type;
               rows[i].unit = c.unit;
               rows[i].bid = priceForCommodity(i, qty, true);
-              rows[i].ask = priceForCommodity(i, qty, false);
+              if (i > AUCTION_COMMODITY_CUTOFF) {
+                rows[i].ask = 0;
+              } else {
+                rows[i].ask = priceForCommodity(i, qty, false);
+              }
               rows[i].qty = qty;
               rows[i].owned = state->me.commodities[i];
             }
@@ -1463,7 +1467,8 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           // common/shared variables
           bool buy_selected = state->modal_choice.selected_index == 0;
           u32 y_off = modal_outline.y+2;
-          str cname = COMMODITIES[state->row.selected_index].name;
+          Commodity current_commodity = COMMODITIES[state->row.selected_index];
+          str cname = current_commodity.name;
 
           switch (state->market_tab_state) {
             case MarketTabStateTable: {
@@ -1480,7 +1485,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               if (user_pressed_backspace) {
                 state->market_tab_state = MarketTabStateTable;
               }
-              // TODO
             } break;
             case MarketTabStateTransact: {
               if (user_pressed_right) {
@@ -1498,7 +1502,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               renderStrToBuffer(tui->frame_buffer, modal_outline.x+(modal_outline.width/2)-strlen(cname), modal_outline.y+1, cname, screen_dimensions);
               u32 buy_x = modal_outline.x+2;
               u32 sell_x = modal_outline.x+modal_outline.width-6;
-              renderStrToBuffer(tui->frame_buffer, buy_x, y_off, "Buy", screen_dimensions);
+              if (current_commodity.type < AUCTION_COMMODITY_CUTOFF) {
+                renderStrToBuffer(tui->frame_buffer, buy_x, y_off, "Buy", screen_dimensions);
+              } else {
+                buy_selected = false;
+              }
               renderStrToBuffer(tui->frame_buffer, sell_x, y_off, "Sell", screen_dimensions);
               if (buy_selected) {
                 u32 pos = XYToPos(buy_x, y_off, tui->screen_dimensions.width);
