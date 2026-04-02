@@ -6,13 +6,13 @@
  *  my_variable
  *  MY_CONSTANT
  * */
-#include <stdio.h>
 #include <stdlib.h>
 #include <sys/random.h>
 #include <math.h>
 #include "shared.h"
 #include "base/impl.c"
-#define NET_OUTGOING_MESSAGE_QUEUE_LEN 64
+#define NET_OUTGOING_MESSAGE_QUEUE_LEN (64)
+#define NET_SERVER_MAX_CLIENTS (16)
 #include "lib/network.c"
 #include "lib/tui.c"
 #include "string_chunk.c"
@@ -21,9 +21,7 @@
 #define LEFT_ROOM_ENTITES_LEN (KB(1))
 #define ROOM_MAP_COLLISIONS_LEN MAX_ROOMS/8
 #define CLIENT_COMMAND_LIST_LEN 8
-#define SERVER_PORT 7777
 #define SERVER_MAX_HEAP_MEMORY MB(256)
-#define SERVER_MAX_CLIENTS 16
 #define GAME_THREAD_CONCURRENCY 2
 #define GOAL_NETWORK_SEND_LOOPS_PER_S 8
 #define GOAL_NETWORK_SEND_LOOP_US 1000000/GOAL_NETWORK_SEND_LOOPS_PER_S
@@ -53,6 +51,7 @@ typedef struct ParsedClientCommand {
   u16 alt_port;
   u32 sender_ip;
   u32 alt_ip;
+  i32 socket_fd;
   u32 qty;
   CommodityType commodity;
   StringChunkList name;
@@ -80,12 +79,11 @@ typedef struct Account {
 } Account;
 
 typedef struct Client {
-  u16 lan_port;
-  i32 lan_ip;
+  bool active;
+  i32 socket_fd;
   u64 account_id;
   SocketAddress address;
   CommandType commands[CLIENT_COMMAND_LIST_LEN];
-  u64 last_ping;
 } Client;
 
 typedef struct ClientList {
@@ -214,14 +212,16 @@ fn void exitWithErrorMessage(ptr msg) {
   exit(1);
 }
 
-fn u32 pushClient(ClientList* clients, SocketAddress addr) {
-  Client new_client = {0};
-  new_client.last_ping = state.frame;
-  new_client.address = addr;
+fn u32 pushClient(ClientList* clients, SocketAddress addr, i32 socket_fd) {
+  Client new_client = {
+    .active = true,
+    .socket_fd = socket_fd,
+    .address = addr,
+  };
 
   // first, try to overwrite an old dc'ed client
   for (u32 i = 1; i < clients->length; i++) {
-    if (clients->items[i].last_ping == 0) {
+    if (clients->items[i].active == false) {
       clients->items[i] = new_client;
       return i;
     }
@@ -248,20 +248,10 @@ fn bool deleteClientByAccountId(ClientList* clients, u64 id) {
   return succeeded;
 }
 
-fn u32 findClientHandleByAccountId(ClientList* clients, u64 id) {
+fn u32 findClientHandle(ClientList* clients, SocketAddress address, i32 socket_fd) {
   for (u32 i = 0; i < clients->length; i++) {
     Client c = clients->items[i];
-    if (c.account_id == id) {
-      return i;
-    }
-  }
-  return 0;
-}
-
-fn u32 findClientHandleBySocketAddress(ClientList* clients, SocketAddress address) {
-  for (u32 i = 0; i < clients->length; i++) {
-    Client c = clients->items[i];
-    if (socketAddressEqual(address, c.address)) {
+    if (socketAddressEqual(address, c.address) && socket_fd == c.socket_fd) {
       return i;
     }
   }
@@ -295,8 +285,8 @@ fn bool shipIsNull(PlayerShip* ship) {
   return ship->id == 0 && ship->base_cost == 0;
 }
 
-fn UDPMessage makeMessageSystemPassengers(StarSystem* sys) {
-  UDPMessage outgoing_message = {0};
+fn NetworkMessage makeMessageSystemPassengers(StarSystem* sys) {
+  NetworkMessage outgoing_message = { .use_socket = true };
   u32 msg_i = 0;
   outgoing_message.bytes[msg_i++] = (u8)MessageSystemPassengers;
   outgoing_message.bytes[msg_i++] = (u8)sys->idx;
@@ -312,8 +302,8 @@ fn UDPMessage makeMessageSystemPassengers(StarSystem* sys) {
   return outgoing_message;
 }
 
-fn UDPMessage makeMessageSystemCommodities(StarSystem* sys) {
-  UDPMessage outgoing_message = {0};
+fn NetworkMessage makeMessageSystemCommodities(StarSystem* sys) {
+  NetworkMessage outgoing_message = { .use_socket = true };
   u32 planet_count = starSystemPlanetCount(sys);
   u32 msg_i = 0;
   outgoing_message.bytes[msg_i++] = (u8)MessageSystemCommodities;
@@ -328,8 +318,8 @@ fn UDPMessage makeMessageSystemCommodities(StarSystem* sys) {
   return outgoing_message;
 }
 
-fn void sendMessageTransactionResult(SocketAddress addr, u32 qty, bool buying, u32 credits) {
-  UDPMessage outgoing_message = {.address = addr};
+fn void sendMessageTransactionResult(i32 socket_fd, SocketAddress addr, u32 qty, bool buying, u32 credits) {
+  NetworkMessage outgoing_message = { .address = addr, .use_socket = true, .socket_fd = socket_fd };
   u32 msg_i = 0;
   outgoing_message.bytes[msg_i++] = (u8)MessageTransactionResult;
   outgoing_message.bytes[msg_i++] = buying;
@@ -340,8 +330,8 @@ fn void sendMessageTransactionResult(SocketAddress addr, u32 qty, bool buying, u
   addSystemMessage((u8*)"Message TransactionResult sent");
 }
 
-fn UDPMessage makeMessagePlayerDetails(PlayerShip ship) {
-  UDPMessage outgoing_message = {0};
+fn NetworkMessage makeMessagePlayerDetails(PlayerShip ship) {
+  NetworkMessage outgoing_message = {0};
   u32 msg_i = 0;
   outgoing_message.bytes[msg_i++] = (u8)MessagePlayerDetails;
   outgoing_message.bytes[msg_i++] = ship.type;
@@ -373,9 +363,8 @@ fn UDPMessage makeMessagePlayerDetails(PlayerShip ship) {
   return outgoing_message;
 }
 
-fn void sendMessageJobAcceptResult(SocketAddress addr, bool result) {
-  UDPMessage outgoing_message = {0};
-  outgoing_message.address = addr;
+fn void sendMessageJobAcceptResult(i32 socket_fd, SocketAddress addr, bool result) {
+  NetworkMessage outgoing_message = { .address = addr, .use_socket = true, .socket_fd = socket_fd };
   u32 msg_i = 0;
   outgoing_message.bytes[msg_i++] = (u8)MessageJobAcceptResult;
   outgoing_message.bytes[msg_i++] = result;
@@ -384,9 +373,8 @@ fn void sendMessageJobAcceptResult(SocketAddress addr, bool result) {
   addSystemMessage((u8*)"MessageJobAcceptResult sent");
 }
 
-fn void sendMessagePayoffResult(SocketAddress addr) {
-  UDPMessage outgoing_message = {0};
-  outgoing_message.address = addr;
+fn void sendMessagePayoffResult(i32 socket_fd, SocketAddress addr) {
+  NetworkMessage outgoing_message = { .address = addr, .use_socket = true, .socket_fd = socket_fd };
   u32 msg_i = 0;
   outgoing_message.bytes[msg_i++] = (u8)MessagePayoffResult;
   outgoing_message.bytes_len = msg_i;
@@ -394,9 +382,8 @@ fn void sendMessagePayoffResult(SocketAddress addr) {
   addSystemMessage((u8*)"MessagePayoffResult sent");
 }
 
-fn void sendMessageStarPositions(SocketAddress addr) {
-  UDPMessage outgoing_message = {0};
-  outgoing_message.address = addr;
+fn void sendMessageStarPositions(i32 socket_fd, SocketAddress addr) {
+  NetworkMessage outgoing_message = { .use_socket = true, .address = addr, .socket_fd = socket_fd };
   // tell the client about the map
   u32 star_msg_size = 2+MAX_PLANETS;
   outgoing_message.bytes_len = 1+(star_msg_size*STAR_SYSTEM_COUNT);
@@ -409,18 +396,24 @@ fn void sendMessageStarPositions(SocketAddress addr) {
     }
   }
   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-  addSystemMessage((u8*)"MessageStarPositions sent");
+  char sbuf[SBUFLEN] = {0};
+  sprintf(sbuf, "MessageStarPositions sent socket=%d, message_len=%d", socket_fd, outgoing_message.bytes_len);
+  addSystemMessage((u8*)sbuf);
 }
 
-fn void sendMessagePlayerDetails(PlayerShip ship, SocketAddress addr) {
-  UDPMessage outgoing_message = makeMessagePlayerDetails(ship);
+fn void sendMessagePlayerDetails(i32 socket_fd, PlayerShip ship, SocketAddress addr) {
+  NetworkMessage outgoing_message = makeMessagePlayerDetails(ship);
   outgoing_message.address = addr;
+  outgoing_message.use_socket = true;
+  outgoing_message.socket_fd = socket_fd;
   outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-  addSystemMessage((u8*)"MessagePlayerDetails sent");
+  char sbuf[SBUFLEN] = {0};
+  sprintf(sbuf, "MessagePlayerDetails sent socket=%d, message_len=%d", socket_fd, outgoing_message.bytes_len);
+  addSystemMessage((u8*)sbuf);
 }
 
-fn void sendMessageAuctionBidResult(SocketAddress addr, AuctionBidResult result) {
-  UDPMessage outgoing_message = {.address = addr};
+fn void sendMessageAuctionBidResult(i32 socket_fd, SocketAddress addr, AuctionBidResult result) {
+  NetworkMessage outgoing_message = { .address = addr, .use_socket = true, .socket_fd = socket_fd };
   u32 msg_i = 0;
   outgoing_message.bytes[msg_i++] = (u8)MessageAuctionBidResult;
   outgoing_message.bytes[msg_i++] = result;
@@ -430,11 +423,13 @@ fn void sendMessageAuctionBidResult(SocketAddress addr, AuctionBidResult result)
 }
 
 fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 socket) {
-  dbg("%d: %s from %s:%d\n", len, command_type_strings[message[0]], inet_ntoa(sender.sin_addr), sender.sin_port);
   char sbuf[SBUFLEN] = {0};
+  sprintf(sbuf, "%d: %s from %s:%d\n", len, command_type_strings[message[0]], inet_ntoa(sender.sin_addr), sender.sin_port);
+  addSystemMessage((u8*)sbuf);
   u32 msg_idx = 0;
   ParsedClientCommand parsed = {
     .type = (CommandType)message[msg_idx++],
+    .socket_fd = socket,
     .sender_ip = sender.sin_addr.s_addr,
     .sender_port = sender.sin_port,
   };
@@ -482,7 +477,6 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       sprintf(sbuf, "Logging in player: %s %d %s\n", command_type_strings[parsed.type], name_len, message + 7);
       addSystemMessage((u8*)sbuf);
     } break;
-    case CommandKeepAlive: break;
     case CommandPayMortgage: {
       parsed.id = readU64FromBufferLE(message + msg_idx);
       MemoryZero(sbuf, SBUFLEN);
@@ -521,18 +515,30 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
   pccThreadSafeQueuePush(state.network_recv_queue, &parsed);
 }
 
-fn void* receiveNetworkUpdates(void* udp) {
-  UDPServer server = *(UDPServer*)udp;
-  dbg("receiveNetworkUpdates() sock=%d\n", server.server_socket);
-  infiniteReadUDPServer(&server, handleIncomingMessage);
+fn void removeClientBySocketFd(i32 socket_fd) {
+  Client blank_client = {0};
+  // i=1 because first client is null-client
+  for (u32 i = 1; i < state.clients.length; i++) {
+    if (state.clients.items[i].socket_fd == socket_fd) {
+      state.clients.items[i] = blank_client;
+    }
+  }
+}
+
+fn void* receiveNetworkUpdates(void* tcp_server) {
+  TCPServer server = *(TCPServer*)tcp_server;
+  char sbuf[SBUFLEN] = {0};
+  sprintf(sbuf, "receiveNetworkUpdates() sock=%d\n", server.socket_fd);
+  addSystemMessage((u8*)sbuf);
+  infiniteReadTCPServer(&server, handleIncomingMessage, removeClientBySocketFd, addSystemMessage);
   return NULL;
 }
 
-fn void* sendNetworkUpdates(void* sock) {
+fn void* sendNetworkUpdates(void* tcp_server) {
+  TCPServer server = *(TCPServer*)tcp_server;
   ThreadContext tctx = {0};
   tctxInit(&tctx);
-  i32* socket_ptr = (i32*)sock;
-  i32 socket = *socket_ptr;
+  i32 socket = server.socket_fd;
   char sbuf[SBUFLEN] = {0};
   u64 send_loop = 0;
   while (!should_quit) {
@@ -541,103 +547,96 @@ fn void* sendNetworkUpdates(void* sock) {
 
     // 1. clear out our "outgoingMessage" queue
     {
-      UDPMessage to_send = { 0 };
-      UDPMessage* next_to_send = outgoingMessageNonblockingQueuePop(state.network_send_queue, &to_send);
+      NetworkMessage to_send = { 0 };
+      NetworkMessage* next_to_send = outgoingMessageNonblockingQueuePop(state.network_send_queue, &to_send);
       u8List bytes_list = { 0 };
       while (next_to_send != NULL) {
-        bytes_list.items = to_send.bytes;
-        bytes_list.length = to_send.bytes_len;
-        bytes_list.capacity = to_send.bytes_len;
-        sendUDPu8List(socket, &to_send.address, &bytes_list);
+        if (to_send.use_socket) {
+          char sbuf[SBUFLEN] = {0};
+          sprintf(sbuf, "sendTCPMessage() sock=%d msg=%s len=%d\n", to_send.socket_fd, MESSAGE_STRINGS[to_send.bytes[0]], to_send.bytes_len);
+          addSystemMessage((u8*)sbuf);
+          sendTCPMessage(to_send);
+        } else { // UDP
+          bytes_list.items = to_send.bytes;
+          bytes_list.length = to_send.bytes_len;
+          bytes_list.capacity = to_send.bytes_len;
+          sendUDPu8List(socket, &to_send.address, &bytes_list);
+        }
         next_to_send = outgoingMessageNonblockingQueuePop(state.network_send_queue, &to_send);
       }
     }
 
-    UDPMessage sys_udp_msg = { 0 };
-    sys_udp_msg = makeMessageSystemCommodities(&state.map[send_loop/2 % STAR_SYSTEM_COUNT]);
-    u8List sys_msg = {
-      .capacity = UDP_MAX_MESSAGE_LEN,
-      .items = sys_udp_msg.bytes,
-      .length = sys_udp_msg.bytes_len,
-    };
-    UDPMessage sys_pass_udp_msg = { 0 };
-    sys_pass_udp_msg = makeMessageSystemPassengers(&state.map[send_loop/2 % STAR_SYSTEM_COUNT]);
-    u8List sys_pass_msg = {
-      .capacity = UDP_MAX_MESSAGE_LEN,
-      .items = sys_pass_udp_msg.bytes,
-      .length = sys_pass_udp_msg.bytes_len,
-    };
+    NetworkMessage base_sys_msg = makeMessageSystemCommodities(&state.map[send_loop/2 % STAR_SYSTEM_COUNT]);
+    NetworkMessage base_pass_msg = makeMessageSystemPassengers(&state.map[send_loop/2 % STAR_SYSTEM_COUNT]);
+
     lockMutex(&state.client_mutex); {
       // WARNING the `i` starts at 1 here because state.clients.items[0] is a "null" Client
       for (u32 i = 1; i < state.clients.length; i++) {
         Client client = state.clients.items[i];
-        if (client.last_ping+CLIENT_TIMEOUT_FRAMES < state.frame) {
-          memset(&state.clients.items[i], 0, sizeof(Client));
+        if (client.active == false) {
           continue;
         }
 
         if (send_loop % 2 == 0) {
           // every other "send-frame" we send each connnected client the current prices for a different system
           // so that the prices mostly stay up to date pretty quickly without having to track changes
-          sendUDPu8List(socket, &client.address, &sys_msg);
+          base_sys_msg.socket_fd = client.socket_fd;
+          sendTCPMessage(base_sys_msg);
           // and the passenger offers
-          sendUDPu8List(socket, &client.address, &sys_pass_msg);
+          base_pass_msg.socket_fd = client.socket_fd;
+          sendTCPMessage(base_pass_msg);
 
           // send the client the current auction details for their current system
           Account* account = &state.accounts[client.account_id];
           if (!accountIsEmpty(account)) {
             StarSystem curr = state.map[account->ship.system_idx];
-            MemoryZero(sbuf, SBUFLEN);
-            u32 msgidx = 0;
-            sbuf[msgidx++] = MessageAuctionDetails;
-            sbuf[msgidx++] = curr.auction.type;
-            sbuf[msgidx++] = curr.auction.qty;
-            msgidx += writeU32ToBufferLE((u8*)sbuf + msgidx, curr.auction.price);
-            msgidx += writeU32ToBufferLE((u8*)sbuf + msgidx, curr.auction.started_at);
-            msgidx += writeU32ToBufferLE((u8*)sbuf + msgidx, curr.auction.finished_at);
-            u8List msg = {
-              .capacity = UDP_MAX_MESSAGE_LEN,
-              .items = (u8*)sbuf,
-              .length = msgidx,
+            NetworkMessage auction_msg = {
+              .use_socket = true,
+              .socket_fd = client.socket_fd,
+              .address = client.address,
             };
-            sendUDPu8List(socket, &client.address, &msg);
+            u32 msgidx = 0;
+            auction_msg.bytes[msgidx++] = MessageAuctionDetails;
+            auction_msg.bytes[msgidx++] = curr.auction.type;
+            auction_msg.bytes[msgidx++] = curr.auction.qty;
+            msgidx += writeU32ToBufferLE((u8*)auction_msg.bytes + msgidx, curr.auction.price);
+            msgidx += writeU32ToBufferLE((u8*)auction_msg.bytes + msgidx, curr.auction.started_at);
+            msgidx += writeU32ToBufferLE((u8*)auction_msg.bytes + msgidx, curr.auction.finished_at);
+            auction_msg.bytes_len = msgidx;
+            sendTCPMessage(auction_msg);
           }
         }
 
         // update all the changed systems
-        UDPMessage msg_data;
+        NetworkMessage msg_data;
         for (u32 ii = 0; ii < STAR_SYSTEM_COUNT; ii++) {
           if (state.map[ii].changed == true) {
             // send commodities
             msg_data = makeMessageSystemCommodities(&state.map[ii]);
-            u8List msg = {
-              .capacity = UDP_MAX_MESSAGE_LEN,
-              .items = msg_data.bytes,
-              .length = msg_data.bytes_len,
-            };
-            sendUDPu8List(socket, &client.address, &msg);
+            msg_data.address = client.address;
+            msg_data.socket_fd = client.socket_fd;
+            msg_data.use_socket = true;
+            sendTCPMessage(msg_data);
 
             // send passenger jobs
             MemoryZero(sbuf, SBUFLEN);
             sprintf(sbuf, "sending passenger jobs for %s\n", STAR_NAMES[ii]);
             addSystemMessage((u8*)sbuf);
             msg_data = makeMessageSystemPassengers(&state.map[ii]);
-            msg.capacity = UDP_MAX_MESSAGE_LEN;
-            msg.items = msg_data.bytes;
-            msg.length = msg_data.bytes_len;
-            sendUDPu8List(socket, &client.address, &msg);
+            msg_data.address = client.address;
+            msg_data.socket_fd = client.socket_fd;
+            msg_data.use_socket = true;
+            sendTCPMessage(msg_data);
           }
         }
         // update all the changed accounts
         for (u32 ii = 0; ii < ACCOUNT_LEN; ii++) {
           if (state.accounts[ii].changed == true) {
             msg_data = makeMessagePlayerDetails(state.accounts[ii].ship);
-            u8List msg = {
-              .capacity = UDP_MAX_MESSAGE_LEN,
-              .items = msg_data.bytes,
-              .length = msg_data.bytes_len,
-            };
-            sendUDPu8List(socket, &client.address, &msg);
+            msg_data.address = client.address;
+            msg_data.socket_fd = client.socket_fd;
+            msg_data.use_socket = true;
+            sendTCPMessage(msg_data);
           }
         }
       }
@@ -670,7 +669,7 @@ fn void* gameLoop(void* params) {
   char sbuf[SBUFLEN] = {0};
   sprintf(sbuf, "Lane %lld (%lld) of %lld starting.", lane_ctx->lane_idx, LaneIdx(), lane_ctx->lane_count);
   addSystemMessage((u8*)sbuf);
-  UDPMessage outgoing_message = {0};
+  NetworkMessage outgoing_message = { .use_socket = true };
   u64 loop_start;
   u64 last_burn = 0;
   u64 last_hp_regen = 0;
@@ -698,7 +697,7 @@ fn void* gameLoop(void* params) {
         sender.sin_addr.s_addr = msg.sender_ip;
         sender.sin_port = msg.sender_port;
         // find which client it is
-        u32 client_handle = findClientHandleBySocketAddress(&state.clients, sender);
+        u32 client_handle = findClientHandle(&state.clients, sender, msg.socket_fd);
         Client* client = &state.clients.items[client_handle];
         switch (msg.type) {
           case CommandBuyAuction: {
@@ -713,15 +712,15 @@ fn void* gameLoop(void* params) {
                 player_sys->auction.finished_at = state.frame;
                 account->ship.credits -= player_sys->auction.price;
                 account->ship.commodities[player_sys->auction.type] += player_sys->auction.qty;
-                sendMessageAuctionBidResult(sender, AuctionBidResultPurchased);
-                sendMessagePlayerDetails(account->ship, sender);
+                sendMessageAuctionBidResult(msg.socket_fd, sender, AuctionBidResultPurchased);
+                sendMessagePlayerDetails(msg.socket_fd, account->ship, sender);
               } else if (!player_has_money_for_purchase) {
-                sendMessageAuctionBidResult(sender, AuctionBidResultNotEnoughMoney);
+                sendMessageAuctionBidResult(msg.socket_fd, sender, AuctionBidResultNotEnoughMoney);
               } else {
-                sendMessageAuctionBidResult(sender, AuctionBidResultNotEnoughCargoSpace);
+                sendMessageAuctionBidResult(msg.socket_fd, sender, AuctionBidResultNotEnoughCargoSpace);
               }
             } else {
-              sendMessageAuctionBidResult(sender, AuctionBidResultAuctionAlreadyFinished);
+              sendMessageAuctionBidResult(msg.socket_fd, sender, AuctionBidResultAuctionAlreadyFinished);
             }
           } break;
           case CommandAcceptPassengerJob: {
@@ -751,7 +750,7 @@ fn void* gameLoop(void* params) {
                       MemoryZero(&player_sys->offers[i], sizeof(PassengerJobOffer));
                       player_sys->changed = true;
                       succeeded = true;
-                      sendMessageJobAcceptResult(sender, succeeded);
+                      sendMessageJobAcceptResult(client->socket_fd, sender, succeeded);
                       // end both for loops "break break;"
                       ii = MAX_PASSENGER_BERTHS;
                       i = MAX_PASSENGER_JOB_OFFERS;
@@ -762,7 +761,7 @@ fn void* gameLoop(void* params) {
               }
             }
             if (!succeeded) {
-              sendMessageJobAcceptResult(sender, succeeded);
+              sendMessageJobAcceptResult(client->socket_fd, sender, succeeded);
             }
           } break;
           case CommandPayMortgage: {
@@ -778,7 +777,7 @@ fn void* gameLoop(void* params) {
             account->ship.credits -= amount_to_pay;
             account->ship.remaining_mortgage -= amount_to_pay;
             account->changed = true;
-            sendMessagePayoffResult(sender);
+            sendMessagePayoffResult(client->socket_fd, sender);
           } break;
           case CommandSetDestination: {
             if (client_handle == 0) break;
@@ -789,7 +788,7 @@ fn void* gameLoop(void* params) {
             if (client_handle == 0) break;
             Account* account = &state.accounts[client->account_id];
             account->ship.ready_to_depart = msg.byte;
-            sendMessagePlayerDetails(account->ship, sender);
+            sendMessagePlayerDetails(client->socket_fd, account->ship, sender);
             state.all_accounts_ready = true;
             for (u32 i = 0; i < ACCOUNT_LEN; i++) {
               if (!accountIsEmpty(&state.accounts[i])) {
@@ -853,33 +852,17 @@ fn void* gameLoop(void* params) {
               }
             }
             sys->changed = true;
-            sendMessagePlayerDetails(account->ship, sender);
-            sendMessageTransactionResult(sender, qty_traded, is_buying_from_system, credit_value);
-          } break;
-          case CommandKeepAlive: {
-            //MemoryZero(sbuf, SBUFLEN);
-            //sprintf(sbuf, "KeepAlive for client_handle=%d on frame %lld", client_handle, state.frame);
-            //addSystemMessage((u8*)sbuf);
-            if (client_handle == 0) {
-              outgoing_message.bytes[0] = (u8)MessageNotAlive;
-              outgoing_message.bytes_len = 1;
-              outgoing_message.address = sender;
-              outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
-            } else {
-              state.clients.items[client_handle].last_ping = state.frame;
-            }
+            sendMessagePlayerDetails(client->socket_fd, account->ship, sender);
+            sendMessageTransactionResult(client->socket_fd, sender, qty_traded, is_buying_from_system, credit_value);
           } break;
           case CommandLogin: {
             if (client_handle == 0) {
-              client_handle = pushClient(&state.clients, sender);
+              client_handle = pushClient(&state.clients, sender, msg.socket_fd);
               client = &state.clients.items[client_handle];
               MemoryZero(sbuf, SBUFLEN);
               sprintf(sbuf, "pushed new client handle = %d\n", client_handle);
               addSystemMessage((u8*)sbuf);
             }
-            // update/set the lan_ip/port info for p2p connections
-            client->lan_ip = htonl(msg.alt_ip);
-            client->lan_port = htons(msg.alt_port);
 
             /*
             struct in_addr ipaddr;
@@ -906,12 +889,13 @@ fn void* gameLoop(void* params) {
               if (pw_matches) {
                 addSystemMessage((u8*)" pw matched\n");
                 existing_account->changed = true;
-                sendMessageStarPositions(sender);
+                sendMessageStarPositions(client->socket_fd, sender);
               } else {
                 // tell the client they did a bad pw
                 outgoing_message.bytes[0] = (u8)MessageBadPw;
                 outgoing_message.bytes_len = 1;
                 outgoing_message.address = sender;
+                outgoing_message.socket_fd = client->socket_fd;
                 outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
                 addSystemMessage((u8*)"MessageBadPw sent\n");
                 break;
@@ -937,6 +921,7 @@ fn void* gameLoop(void* params) {
               writeU64ToBufferLE(outgoing_message.bytes + 1, existing_account->ship.id);
               outgoing_message.bytes_len = 9;
               outgoing_message.address = sender;
+              outgoing_message.socket_fd = client->socket_fd;
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               addSystemMessage((u8*)"MessageCharacterId sent\n");
             } else {
@@ -944,6 +929,7 @@ fn void* gameLoop(void* params) {
               outgoing_message.bytes[0] = (u8)MessageNewAccountCreated;
               outgoing_message.bytes_len = 1;
               outgoing_message.address = sender;
+              outgoing_message.socket_fd = client->socket_fd;
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               addSystemMessage((u8*)"MessageNewAccountCreated sent\n");
             }
@@ -971,7 +957,7 @@ fn void* gameLoop(void* params) {
                 .base_cost = template.base_cost,
                 .remaining_mortgage = template.base_cost - STARTING_DOWN_PAYMENT,
                 .interest_rate = calcInterestRate(template.base_cost, STARTING_DOWN_PAYMENT),
-                .credits = 20000.0,
+                .credits = 2000.0,
                 .cu_m_fuel = template.cu_m_fuel,
                 .cu_m_o2 = template.cu_m_o2,
                 .id = account->id,
@@ -990,18 +976,20 @@ fn void* gameLoop(void* params) {
 
               // tell the client their account id
               outgoing_message.address = sender;
+              outgoing_message.socket_fd = client->socket_fd;
               outgoing_message.bytes_len = 9;
               outgoing_message.bytes[0] = (u8)MessageCharacterId;
               writeU64ToBufferLE(outgoing_message.bytes + 1, account->ship.id);
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               addSystemMessage((u8*)"MessageCharacterId sent\n");
 
-              sendMessagePlayerDetails(account->ship, sender);
+              sendMessagePlayerDetails(client->socket_fd, account->ship, sender);
 
-              sendMessageStarPositions(sender);
+              sendMessageStarPositions(client->socket_fd, sender);
 
               outgoing_message = makeMessageSystemCommodities(&starting_system);
               outgoing_message.address = sender;
+              outgoing_message.socket_fd = client->socket_fd;
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               MemoryZero(sbuf, SBUFLEN);
               sprintf(sbuf, "%s sent\n", MESSAGE_STRINGS[outgoing_message.bytes[0]]);
@@ -1020,9 +1008,10 @@ fn void* gameLoop(void* params) {
       }
 
       if (state.all_accounts_ready) {
-        for (u32 i = 1; i < SERVER_MAX_CLIENTS; i++) {
-          if (state.clients.items[i].last_ping != 0) {
+        for (u32 i = 1; i < NET_SERVER_MAX_CLIENTS; i++) {
+          if (state.clients.items[i].active) {
             outgoing_message.address = state.clients.items[i].address;
+            outgoing_message.socket_fd = state.clients.items[i].socket_fd;
             outgoing_message.bytes_len = 1;
             outgoing_message.bytes[0] = (u8)MessageTurnTick;
             outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
@@ -1031,9 +1020,10 @@ fn void* gameLoop(void* params) {
       }
 
       if (state.someone_won) {
-        for (u32 i = 1; i < SERVER_MAX_CLIENTS; i++) {
-          if (state.clients.items[i].last_ping != 0) {
+        for (u32 i = 1; i < NET_SERVER_MAX_CLIENTS; i++) {
+          if (state.clients.items[i].active) {
             outgoing_message.address = state.clients.items[i].address;
+            outgoing_message.socket_fd = state.clients.items[i].socket_fd;
             outgoing_message.bytes_len = 2;
             outgoing_message.bytes[0] = (u8)MessageGameOver;
             outgoing_message.bytes[1] = state.winner_id;
@@ -1074,7 +1064,7 @@ fn void* gameLoop(void* params) {
           f32 t_sec = ((f32)state.frame - (f32)grace_period_ends_at) / (f32)GOAL_GAME_LOOPS_PER_S;
           // t is in minutes
           f32 t = t_sec / 60;
-          f32 decay = -0.60 * t;
+          f32 decay = -0.65 * t;
           f32 floor_price = COMMODITIES[sys->auction.type].price * 0.9;
           sys->auction.price = Max((initial_price * pow(EULERS_E, decay)), floor_price);
         }
@@ -1179,8 +1169,9 @@ fn void* gameLoop(void* params) {
               addSystemMessage((u8*)sbuf);
               // send a job completion message?
               for (u32 i = 1; i < state.clients.length; i++) {
-                if (state.clients.items[i].last_ping != 0 && state.clients.items[i].account_id == acct->id) {
-                  outgoing_message.address = state.clients.items[i].address;
+                if (state.clients.items[i].active && state.clients.items[i].account_id == acct->id) {
+                  outgoing_message.address =   state.clients.items[i].address;
+                  outgoing_message.socket_fd = state.clients.items[i].socket_fd;
                   outgoing_message.bytes_len = 2;
                   outgoing_message.bytes[0] = (u8)MessageJobComplete;
                   outgoing_message.bytes[1] = true;
@@ -1201,8 +1192,9 @@ fn void* gameLoop(void* params) {
                 addSystemMessage((u8*)sbuf);
                 // send a job failed message?
                 for (u32 i = 1; i < state.clients.length; i++) {
-                  if (state.clients.items[i].last_ping != 0 && state.clients.items[i].account_id == acct->id) {
-                    outgoing_message.address = state.clients.items[i].address;
+                  if (state.clients.items[i].active && state.clients.items[i].account_id == acct->id) {
+                    outgoing_message.address =   state.clients.items[i].address;
+                    outgoing_message.socket_fd = state.clients.items[i].socket_fd;
                     outgoing_message.bytes_len = 2;
                     outgoing_message.bytes[0] = (u8)MessageJobComplete;
                     outgoing_message.bytes[1] = false;
@@ -1456,9 +1448,9 @@ i32 main(i32 argc, ptr argv[]) {
   state.network_send_queue = newOutgoingMessageQueue(&permanent_arena);
   // alloc the global hashmap of rooms
   // init + alloc clients
-  state.clients.capacity = SERVER_MAX_CLIENTS;
+  state.clients.capacity = NET_SERVER_MAX_CLIENTS;
   state.clients.length = 1; // making entry 0 to be a "null" client 
-  state.clients.items = (Client*)arenaAllocArray(&permanent_arena, Client, SERVER_MAX_CLIENTS);
+  state.clients.items = (Client*)arenaAllocArray(&permanent_arena, Client, NET_SERVER_MAX_CLIENTS);
   for (i32 i = 0; i < SYSTEM_MESSAGES_LEN; i++) {
     system_messages[i].capacity = MAX_SYSTEM_MESSAGE_LEN;
     system_messages[i].length = 0;
@@ -1657,13 +1649,13 @@ i32 main(i32 argc, ptr argv[]) {
   }
 
   // 2. spin off sendNetworkUpdates() infinite loop thread
-  UDPServer listener = createUDPServer(SERVER_PORT);
-  if (!listener.ready) {
-    exitWithErrorMessage("Couldn't start the udp server");
+  TCPServer server = createTCPServer(SERVER_PORT);
+  if (!server.ready) {
+    exitWithErrorMessage("Couldn't start the server");
   }
-  Thread send_thread = spawnThread(&sendNetworkUpdates, &listener.server_socket);
+  Thread send_thread = spawnThread(&sendNetworkUpdates, &server);
   // 3. infinitely wait for incoming UDP messages and process them (usually by just dropping user-commands into the relevant block of shared memory)
-  Thread recv_thread = spawnThread(&receiveNetworkUpdates, &listener);
+  Thread recv_thread = spawnThread(&receiveNetworkUpdates, &server);
 
   u64 lane_broadcast_val = 0;
   Barrier barrier = osBarrierAlloc(GAME_THREAD_CONCURRENCY);

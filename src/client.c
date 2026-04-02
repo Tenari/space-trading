@@ -13,9 +13,6 @@
 #include "lib/network.c"
 #include "lib/tui.c"
 #include "string_chunk.c"
-//#include "assets/asset1.h"
-//#include "assets/asset2.h"
-//#include "assets/asset3.h"
 
 ///// #define a bunch of client-only tunable game constants
 #define SYSTEM_MESSAGES_LEN 32
@@ -167,8 +164,7 @@ typedef struct GameState {
   MenuState menu;
   MenuState row; // for tracking which row of a table the user has selected
   MenuState modal_choice;
-  UDPMessage keep_alive_msg;
-  UDPClient client;
+  TCPClient client;
   StringChunkList message_input;
   StarSystem map[STAR_SYSTEM_COUNT];
   Pos2 pos;
@@ -277,23 +273,6 @@ fn void renderSystemMessages(Pixel* buf, Dim2 screen_dimensions, Box sys_msg_box
   }
 }
 
-fn void renderStaticAssetToPixelBuffer(TuiState* tui, u8* asset, u32 len, u16 x, u16 y) {
-  u16 line = 0;
-  u16 x_in_line = 0;
-  u16 pos = x + (tui->screen_dimensions.width * y);
-  for (u32 i = 0; i < len; i++, x_in_line++) {
-    if (asset[i] == '\n') {
-      line += 1;
-      x_in_line = 0;
-      pos = x + (tui->screen_dimensions.width * (y+line));
-    } else if (asset[i] == ' ') {
-      // do nothing, we skip spaces in our assets
-    } else {
-      tui->frame_buffer[pos+x_in_line].bytes[0] = asset[i];
-    }
-  }
-}
-
 fn void resetTabRow(Tab tab) {
   if (state.menu.selected_index == TabMarket) {
     state.market_tab_state = MarketTabStateTable;
@@ -339,10 +318,17 @@ fn void moveRowUpDown(bool user_pressed_up, bool user_pressed_down) {
   }
 }
 
-fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 socket) {
+fn void handleIncomingMessage(u8* message, i32 len) {
+  assert(len >= 0); // TODO actually handle this error
   u64 msg_pos = 0;
   Message msg_type = message[msg_pos++];
-  dbg("handleIncomingMessage() of len=%d, message=%s\n", len, MESSAGE_STRINGS[msg_type]);
+
+  char sbuf[SBUFLEN] = {0};
+  sprintf(sbuf, "handleIncomingMessage() of len=%d, message=%s\n", len, MESSAGE_STRINGS[msg_type]);
+  if (msg_type != MessageSystemPassengers && msg_type != MessageSystemCommodities) {
+    addSystemMessage((u8*)sbuf);
+  }
+
   u8List bytes = {len, len, message};
   ParsedServerMessage parsed = {0};
   parsed.type = msg_type;
@@ -462,29 +448,24 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
   psmThreadSafeQueuePush(network_recv_queue, &parsed);
 }
 
-fn void* receiveNetworkUpdates(void* udp) {
-  UDPClient client = *(UDPClient*)udp;
+fn void* receiveNetworkUpdates(void* net_client) {
+  TCPClient client = *(TCPClient*)net_client;
   dbg("receiveNetworkUpdates() sock=%d\n", client.socket);
-  UDPServer server = {
-    .ready = true,
-    .server_address = client.server_address,
-    .server_socket = client.socket
-  };
-  infiniteReadUDPServer(&server, handleIncomingMessage);
+  infiniteReadTCPClient(client.socket, &should_quit, handleIncomingMessage, addSystemMessage);
   return NULL;
 }
 
-fn void* sendNetworkUpdates(void* udp) {
-  i32 socket_fd = ((UDPClient*)udp)->socket;
-  dbg("sendNetworkUpdates() sock=%d\n", socket_fd);
-  u8List bytes_list = {0};
+fn void* sendNetworkUpdates(void* net_client) {
+  TCPClient* client = (TCPClient*)net_client;
+  dbg("sendNetworkUpdates() sock=%d\n", client->socket);
+  NetworkMessage msg = {
+    .use_socket = true,
+    .socket_fd = client->socket,
+    .address = client->server_address,
+  };
   while (!should_quit) {
-    UDPMessage msg = {0};
     outgoingMessageQueuePop(network_send_queue, &msg);
-    bytes_list.items = msg.bytes;
-    bytes_list.length = msg.bytes_len;
-    bytes_list.capacity = msg.bytes_len;
-    sendUDPu8List(socket_fd, &msg.address, &bytes_list);
+    sendTCPMessage(msg);
   }
   return NULL;
 }
@@ -528,15 +509,16 @@ fn Box defaultModal(TuiState* tui) {
   return modal_outline;
 }
 
-fn void sendLoginCommand(SocketAddress addr, u16 client_port) {
+fn void sendLoginCommand(TCPClient* net_client) {
   u32 msg_idx = 0;
   // drop the login message into the network_send_queue
-  UDPMessage msg = { .address = addr };
+  NetworkMessage msg = { .use_socket = true, .socket_fd = net_client->socket, .address = net_client->server_address };
   // 1. msg type/CommandType
   msg.bytes[msg_idx++] = CommandLogin;
   // 2. our LAN-IP to handle the case where we are on the same LAN as the guy we are trying to fight
   // and our "listened" UDP port
-  msg_idx += writeU16ToBufferLE(msg.bytes + msg_idx, ~client_port);
+  //msg_idx += writeU16ToBufferLE(msg.bytes + msg_idx, ~client_port);
+  msg_idx += writeU16ToBufferLE(msg.bytes + msg_idx, 9999); // we aren't actually doing this right now
   msg_idx += writeI32ToBufferLE(msg.bytes + msg_idx, ~osLanIPAddress());
   // 2. how long is the name
   msg.bytes[msg_idx++] = state.login_state.name.length;
@@ -551,7 +533,6 @@ fn void sendLoginCommand(SocketAddress addr, u16 client_port) {
 fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count) {
   GameState* state = (GameState*) s;
   state->loop_count = loop_count;
-  UDPClient* udp = &state->client;
   state->old_screen = state->screen;
   Dim2 screen_dimensions = tui->screen_dimensions;
   bool game_screen_changed = state->old_screen != state->screen; // detect new screens
@@ -594,7 +575,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         // auto-re-login
         if (state->me.base_cost > 0) {
           addSystemMessage((u8*)"auto re logging in due to MessageNotAlive");
-          sendLoginCommand(udp->server_address, udp->client_port);
+          sendLoginCommand(&state->client);
           state->screen = ScreenLogin;
           state->login_state.state = LoginScreenStateLoading;
         }
@@ -859,9 +840,12 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
         state->me.remaining_mortgage = template.base_cost - STARTING_DOWN_PAYMENT;
         state->me.interest_rate = calcInterestRate(template.base_cost, STARTING_DOWN_PAYMENT);
         // send character ship details to server
-        UDPMessage msg = {0};
-        msg.address = udp->server_address;
-        msg.bytes_len = 2;
+        NetworkMessage msg = {
+          .use_socket = true,
+          .address = state->client.server_address,
+          .socket_fd = state->client.socket,
+          .bytes_len = 2,
+        };
         // 1. msg type/CommandType
         msg.bytes[0] = CommandCreateCharacter;
         // 2. chosen ShipType
@@ -1114,14 +1098,16 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
                 state->destination_sys_idx = i;
                 // send the destination to the server
                 u32 msg_idx = 0;
-                UDPMessage msg = {0};
-                msg.address = udp->server_address;
+                NetworkMessage msg = {
+                  .use_socket = true,
+                  .address = state->client.server_address,
+                  .socket_fd = state->client.socket,
+                };
                 // 1. msg type/CommandType
                 msg.bytes[msg_idx++] = CommandSetDestination;
                 // 2. buy?
                 msg.bytes[msg_idx++] = state->destination_sys_idx;
                 msg.bytes_len = msg_idx;
-
                 outgoingMessageQueuePush(network_send_queue, &msg);
               }
             }
@@ -1186,14 +1172,16 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             if (user_pressed_enter && state->ship_tab_states == ShipTabStateMain) {
               // send the "ready" or "not ready" message to the server
               u32 msg_idx = 0;
-              UDPMessage msg = {0};
-              msg.address = udp->server_address;
+              NetworkMessage msg = {
+                .use_socket = true,
+                .address = state->client.server_address,
+                .socket_fd = state->client.socket,
+              };
               // 1. msg type/CommandType
               msg.bytes[msg_idx++] = CommandReadyStatus;
               // 2. buy?
               msg.bytes[msg_idx++] = !state->me.ready_to_depart;
               msg.bytes_len = msg_idx;
-
               outgoingMessageQueuePush(network_send_queue, &msg);
             }
           }
@@ -1276,14 +1264,16 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
             if (user_pressed_enter) {
               // send the "payoff" message to server
               u32 msg_idx = 0;
-              UDPMessage msg = {0};
-              msg.address = udp->server_address;
+              NetworkMessage msg = {
+                .use_socket = true,
+                .address = state->client.server_address,
+                .socket_fd = state->client.socket,
+              };
               // 1. msg type/CommandType
               msg.bytes[msg_idx++] = CommandPayMortgage;
               // 2. buy?
               msg_idx += writeU64ToBufferLE(msg.bytes + msg_idx, input_quantity);
               msg.bytes_len = msg_idx;
-
               outgoingMessageQueuePush(network_send_queue, &msg);
 
               state->ship_tab_states = ShipTabStateLoading;
@@ -1344,8 +1334,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
               if (user_pressed_enter) {
                 // send the "buy this auction" message to the server
                 u32 msg_idx = 0;
-                UDPMessage msg = {0};
-                msg.address = udp->server_address;
+                NetworkMessage msg = {
+                  .use_socket = true,
+                  .address = state->client.server_address,
+                  .socket_fd = state->client.socket,
+                };
                 msg.bytes[msg_idx++] = CommandBuyAuction;
                 msg.bytes_len = msg_idx;
                 outgoingMessageQueuePush(network_send_queue, &msg);
@@ -1550,8 +1543,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
                 // send the "purchase" or "sell" message to server
                 // get back new "status" of things
                 u32 msg_idx = 0;
-                UDPMessage msg = {0};
-                msg.address = udp->server_address;
+                NetworkMessage msg = {
+                  .use_socket = true,
+                  .address = state->client.server_address,
+                  .socket_fd = state->client.socket,
+                };
                 // 1. msg type/CommandType
                 msg.bytes[msg_idx++] = CommandTransact;
                 // 2. buy?
@@ -1561,7 +1557,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
                 // 4. commodity
                 msg.bytes[msg_idx++] = selected_commodity.type;
                 msg.bytes_len = msg_idx;
-
                 outgoingMessageQueuePush(network_send_queue, &msg);
 
                 state->market_tab_state = MarketTabStateLoading;
@@ -1701,8 +1696,11 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
                   // send the "job accept" message to server
                   // get back new "status" of things
                   u32 msg_idx = 0;
-                  UDPMessage msg = {0};
-                  msg.address = udp->server_address;
+                  NetworkMessage msg = {
+                    .use_socket = true,
+                    .address = state->client.server_address,
+                    .socket_fd = state->client.socket,
+                  };
                   msg.bytes[msg_idx++] = CommandAcceptPassengerJob;
                   msg.bytes[msg_idx++] = current_row.goal_system_idx;
                   msg.bytes[msg_idx++] = current_row.people;
@@ -1787,7 +1785,7 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           state->login_state.selected_field = 1;
           state->login_state.field_index = 0;
         } else {
-          sendLoginCommand(udp->server_address, udp->client_port);
+          sendLoginCommand(&state->client);
           // show loading signal, stop accepting input
           state->login_state.state = LoginScreenStateLoading;
           addSystemMessage((u8*)state->login_state.name.bytes);
@@ -1867,11 +1865,6 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
       break;
   }
   
-  if (loop_count % 10 == 0) {
-    outgoingMessageQueuePush(network_send_queue, &state->keep_alive_msg);
-    //outgoingMessageQueuePush(network_send_queue, &testm);
-  }
-
   return should_quit;
 }
 
@@ -1913,23 +1906,22 @@ i32 main(i32 argc, ptr argv[]) {
     exit(1);
   }
   ptr server_address = NULL;
+  char input_string[16] = { 0 };
   if (argc > 1) {
     server_address = argv[1];
   } else {
     printf("Server IP Address: ");
-    char input_string[16] = { 0 };
     scanf("%15s", input_string);
     printf("%s", input_string);
     if (input_string[0] && input_string[1] && input_string[2] && input_string[3]) {
       server_address = input_string;
     }
   }
-  state.client = createUDPClient(7777, server_address);
-
-  // "hardcoded" keep alive message to periodically send to server
-  state.keep_alive_msg.address = state.client.server_address;
-  state.keep_alive_msg.bytes[0] = CommandKeepAlive;
-  state.keep_alive_msg.bytes_len = 1;
+  state.client = createTCPClient(SERVER_PORT, server_address);
+  if (!state.client.ready) {
+    printf("network could not connect() to server");
+    exit(1);
+  }
 
   Thread recv_thread = spawnThread(&receiveNetworkUpdates, &state.client);
   Thread send_thread = spawnThread(&sendNetworkUpdates, &state.client);

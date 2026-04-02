@@ -238,6 +238,10 @@
 // only valid if there's an in-scope variable bool `debug_mode`
 #define dbg(fmt, ...) osDebugPrint(debug_mode, fmt, ##__VA_ARGS__)
 
+///// SYSTEM INCLUDES I always want
+#include <stdio.h>
+#include <unistd.h>
+
 ///// TYPES
 // integer types
 typedef unsigned char         u8;

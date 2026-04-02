@@ -1,6 +1,5 @@
 #include "string.h"
 #include <userenv.h>
-#include <stdio.h>
 
 static u64 w32_ticks_per_sec = 1;
 static u32 w32_thread_context_index;

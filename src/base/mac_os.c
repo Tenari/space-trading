@@ -1,10 +1,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <time.h>
 #include <stdarg.h>
-#include <stdio.h>
 #include "all.h"
 #include "pthread_barrier.h"
 

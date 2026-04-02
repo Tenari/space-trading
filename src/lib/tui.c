@@ -1,8 +1,6 @@
 #include "../base/all.h"
 #include "../string_chunk.h"
 #include <stdlib.h>
-#include <stdio.h>
-#include <unistd.h>
 #include <fcntl.h>
 
 #define UTF8_MAX_WIDTH 4

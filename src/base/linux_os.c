@@ -2,10 +2,8 @@
 #define _POSIX_C_SOURCE 200809L
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <time.h>
 #include <stdarg.h>
-#include <stdio.h>
 #include "all.h"
 
 global pthread_barrier_t linux_thread_barrier;

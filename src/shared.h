@@ -18,6 +18,7 @@
 #define AUCTION_COMMODITY_CUTOFF (7)
 #define MAX_SCREEN_HEIGHT 300
 #define MAX_SCREEN_WIDTH 800
+#define SERVER_PORT 7777
 
 #define AUCTION_PRICE_START_MULTIPLE (12)
 
@@ -366,7 +367,6 @@ typedef enum Direction {
 
 typedef enum CommandType {
   CommandInvalid,
-  CommandKeepAlive,
   CommandLogin,
   CommandCreateCharacter,
   CommandTransact,
@@ -380,7 +380,6 @@ typedef enum CommandType {
 
 static const char* command_type_strings[CommandType_Count] = {
   "Invalid",
-  "KeepAlive",
   "Login",
   "CreateCharacter",
   "ReadyStatus",
