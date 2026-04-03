@@ -71,7 +71,7 @@ global ShipTemplate SHIPS[] = {
     .vacuum_cargo_slots = 30, .climate_cargo_slots = 0, .passenger_berths = 0,
     .passenger_amenities_flags = 0,
     .smugglers_hold_cu_m = 0, .base_cost = 275000,
-    .cu_m_fuel = 2500, .cu_m_o2 = 800,
+    .cu_m_fuel = 2500, .cu_m_o2 = 700,
   },
   {
     .type = ShipNX400, .drive_efficiency = 6, .life_support_efficiency = 5,
@@ -434,7 +434,7 @@ static const char* MESSAGE_STRINGS[] = {
 fn u32 fuelCostForTravel(u32 drive_efficiency, Pos2 current, Pos2 dest) {
   u32 x_distance = Max(current.x, dest.x) - Min(current.x, dest.x);
   u32 y_distance = Max(current.y, dest.y) - Min(current.y, dest.y);
-  u32 fuel_per_dist = 100 - drive_efficiency*5;
+  u32 fuel_per_dist = 100 - drive_efficiency*6;
   return (x_distance + y_distance) * fuel_per_dist;
 }
 

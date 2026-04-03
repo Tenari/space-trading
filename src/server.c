@@ -1467,12 +1467,25 @@ i32 main(i32 argc, ptr argv[]) {
   // GAME LOGIC SETUP
 
   // set position of all star systems
+  state.map[0].x = 3;
+  state.map[0].y = 4;
+  state.map[1].x = 13;
+  state.map[1].y = 2;
+  state.map[2].x = 22;
+  state.map[2].y = 3;
+  state.map[3].x = 25;
+  state.map[3].y = 8;
+  state.map[4].x = 17;
+  state.map[4].y = 9;
+  state.map[5].x = 6;
+  state.map[5].y = 7;
   for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
     state.map[i].idx = i;
     state.map[i].name = STAR_NAMES[i];
-    state.map[i].crime = rand() % 100;
-    state.map[i].x = rand() % MAP_WIDTH;
-    state.map[i].y = rand() % MAP_HEIGHT;
+    if (state.map[i].x == 0 && state.map[i].y == 0) {
+      state.map[i].x = rand() % MAP_WIDTH;
+      state.map[i].y = rand() % MAP_HEIGHT;
+    }
     // ensure all the star systems are "spaced out" a bit
     bool conflicting_pos = false;
     for (u32 ii = 0; ii < i; ii++) {

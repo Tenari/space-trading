@@ -1094,6 +1094,10 @@ fn bool updateAndRender(TuiState* tui, void* s, u8* input_buffer, u64 loop_count
           }
           renderStrToBuffer(tui->frame_buffer, x_off, y_off++, sbuf, screen_dimensions);
 
+          MemoryZero(sbuf, SBUFLEN);
+          sprintf(sbuf, "(%d, %d)", state->pos.x, state->pos.y);
+          renderStrToBuffer(tui->frame_buffer, x_off, y_off++, sbuf, screen_dimensions);
+
           if (user_pressed_enter) {
             for (u32 i = 0; i < STAR_SYSTEM_COUNT; i++) {
               if (state->pos.x == state->map[i].x && state->pos.y == state->map[i].y) {
