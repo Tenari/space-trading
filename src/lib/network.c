@@ -464,7 +464,7 @@ i32 sendTCPMessage(NetworkMessage msg) {
   assert(msg.use_socket);
   assert(msg.socket_fd >= 0);
   u16 msg_len = htons(msg.bytes_len);
-  i32 result = send(msg.socket_fd, &msg_len, 2, 0);
+  i32 result = send(msg.socket_fd, (void*)&msg_len, 2, 0);
   if (result == -1) {
     return result;
   }
