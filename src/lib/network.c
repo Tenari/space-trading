@@ -460,14 +460,27 @@ i32 sendUDPu8List(i32 using_socket, SocketAddress* to, u8List* message) {
 i32 sendUDPMessage(UDPServer* to, u8* message, u32 len) {
   return sendto(to->server_socket, message, len, 0, (struct sockaddr *)&to->server_address, sizeof(struct sockaddr));
 }
+i32 sendall(i32 socket, void* buf, i32 len) {
+  u32 total_sent = 0;
+  i32 left_to_send = len;
+  i32 sent_this_round;
+  while(total_sent < len) {
+    sent_this_round = send(socket, buf+total_sent, left_to_send, 0);
+    if (sent_this_round == -1) { return -1; }
+    total_sent += sent_this_round;
+    left_to_send -= sent_this_round;
+  }
+  return total_sent;
+}
+
 i32 sendTCPMessage(NetworkMessage msg) {
   assert(msg.use_socket);
   assert(msg.socket_fd >= 0);
   u16 msg_len = htons(msg.bytes_len);
-  i32 result = send(msg.socket_fd, (void*)&msg_len, 2, 0);
+  i32 result = sendall(msg.socket_fd, (void*)&msg_len, 2);
   if (result == -1) {
     return result;
   }
-  return send(msg.socket_fd, msg.bytes, msg.bytes_len, 0);
+  return sendall(msg.socket_fd, msg.bytes, msg.bytes_len);
 }
 
