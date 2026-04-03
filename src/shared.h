@@ -378,10 +378,11 @@ typedef enum CommandType {
   CommandType_Count,
 } CommandType;
 
-static const char* command_type_strings[CommandType_Count] = {
+static const char* COMMAND_TYPE_STRINGS[CommandType_Count] = {
   "Invalid",
   "Login",
   "CreateCharacter",
+  "Transact",
   "ReadyStatus",
   "SetDestination",
   "PayMortgage",

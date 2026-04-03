@@ -1,5 +1,4 @@
 #include "../base/all.h"
-#include <poll.h>
 
 // https://stackoverflow.com/questions/1098897/what-is-the-largest-safe-udp-packet-size-on-the-internet
 #define UDP_MAX_MESSAGE_LEN 508
@@ -284,6 +283,7 @@ i32 recvMessage(i32 socket, u8* message_buffer, void (*addSystemMessage)(u8* msg
 
 void infiniteReadTCPServer(
   TCPServer* server,
+  bool* should_quit,
   void (*handleMessage)(u8* udp_message, u32 udp_len, SocketAddress sending_address, i32 socket),
   void (*closeConnection)(i32 socket_fd),
   void (*addSystemMessage)(u8* msg)
@@ -300,12 +300,11 @@ void infiniteReadTCPServer(
   u32 pollable_fd_count = 1;
 
   i32 poll_event_count;
-  bool should_keep_serving = true;
-  while (should_keep_serving) {
-    poll_event_count = poll(pollable_fds, pollable_fd_count, -1);
+  while (*should_quit == false) {
+    poll_event_count = poll(pollable_fds, pollable_fd_count, 3000); // times out after 3 seconds so that quitting the server will actually quit the server process in relatively short order.
     if (poll_event_count == -1) {
       // TODO handle error better
-      should_keep_serving = false;
+      *should_quit = true;
       continue;
     }
     for(u32 i = 0; i < pollable_fd_count; i++) {

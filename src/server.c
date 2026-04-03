@@ -80,6 +80,7 @@ typedef struct Account {
 
 typedef struct Client {
   bool active;
+  bool needs_systems_init;
   i32 socket_fd;
   u64 account_id;
   SocketAddress address;
@@ -424,7 +425,7 @@ fn void sendMessageAuctionBidResult(i32 socket_fd, SocketAddress addr, AuctionBi
 
 fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 socket) {
   char sbuf[SBUFLEN] = {0};
-  sprintf(sbuf, "%d: %s from %s:%d\n", len, command_type_strings[message[0]], inet_ntoa(sender.sin_addr), sender.sin_port);
+  sprintf(sbuf, "%d: %s from %s:%d\n", len, COMMAND_TYPE_STRINGS[message[0]], inet_ntoa(sender.sin_addr), sender.sin_port);
   addSystemMessage((u8*)sbuf);
   u32 msg_idx = 0;
   ParsedClientCommand parsed = {
@@ -474,7 +475,7 @@ fn void handleIncomingMessage(u8* message, u32 len, SocketAddress sender, i32 so
       msg_idx += temp_str.length;
 
       MemoryZero(sbuf, SBUFLEN);
-      sprintf(sbuf, "Logging in player: %s %d %s\n", command_type_strings[parsed.type], name_len, message + 7);
+      sprintf(sbuf, "Logging in player: %s %d %s\n", COMMAND_TYPE_STRINGS[parsed.type], name_len, message + 7);
       addSystemMessage((u8*)sbuf);
     } break;
     case CommandPayMortgage: {
@@ -530,7 +531,7 @@ fn void* receiveNetworkUpdates(void* tcp_server) {
   char sbuf[SBUFLEN] = {0};
   sprintf(sbuf, "receiveNetworkUpdates() sock=%d\n", server.socket_fd);
   addSystemMessage((u8*)sbuf);
-  infiniteReadTCPServer(&server, handleIncomingMessage, removeClientBySocketFd, addSystemMessage);
+  infiniteReadTCPServer(&server, &should_quit, handleIncomingMessage, removeClientBySocketFd, addSystemMessage);
   return NULL;
 }
 
@@ -566,9 +567,6 @@ fn void* sendNetworkUpdates(void* tcp_server) {
       }
     }
 
-    NetworkMessage base_sys_msg = makeMessageSystemCommodities(&state.map[send_loop/2 % STAR_SYSTEM_COUNT]);
-    NetworkMessage base_pass_msg = makeMessageSystemPassengers(&state.map[send_loop/2 % STAR_SYSTEM_COUNT]);
-
     lockMutex(&state.client_mutex); {
       // WARNING the `i` starts at 1 here because state.clients.items[0] is a "null" Client
       for (u32 i = 1; i < state.clients.length; i++) {
@@ -578,14 +576,6 @@ fn void* sendNetworkUpdates(void* tcp_server) {
         }
 
         if (send_loop % 2 == 0) {
-          // every other "send-frame" we send each connnected client the current prices for a different system
-          // so that the prices mostly stay up to date pretty quickly without having to track changes
-          base_sys_msg.socket_fd = client.socket_fd;
-          sendTCPMessage(base_sys_msg);
-          // and the passenger offers
-          base_pass_msg.socket_fd = client.socket_fd;
-          sendTCPMessage(base_pass_msg);
-
           // send the client the current auction details for their current system
           Account* account = &state.accounts[client.account_id];
           if (!accountIsEmpty(account)) {
@@ -610,7 +600,7 @@ fn void* sendNetworkUpdates(void* tcp_server) {
         // update all the changed systems
         NetworkMessage msg_data;
         for (u32 ii = 0; ii < STAR_SYSTEM_COUNT; ii++) {
-          if (state.map[ii].changed == true) {
+          if (state.map[ii].changed == true || client.needs_systems_init) {
             // send commodities
             msg_data = makeMessageSystemCommodities(&state.map[ii]);
             msg_data.address = client.address;
@@ -639,6 +629,8 @@ fn void* sendNetworkUpdates(void* tcp_server) {
             sendTCPMessage(msg_data);
           }
         }
+
+        state.clients.items[i].needs_systems_init = false;
       }
     } unlockMutex(&state.client_mutex);
 
@@ -783,12 +775,13 @@ fn void* gameLoop(void* params) {
             if (client_handle == 0) break;
             Account* account = &state.accounts[client->account_id];
             account->destination_sys_idx = msg.byte;
+            account->changed = true;
           } break;
           case CommandReadyStatus: {
             if (client_handle == 0) break;
             Account* account = &state.accounts[client->account_id];
             account->ship.ready_to_depart = msg.byte;
-            sendMessagePlayerDetails(client->socket_fd, account->ship, sender);
+            account->changed = true;
             state.all_accounts_ready = true;
             for (u32 i = 0; i < ACCOUNT_LEN; i++) {
               if (!accountIsEmpty(&state.accounts[i])) {
@@ -852,6 +845,7 @@ fn void* gameLoop(void* params) {
               }
             }
             sys->changed = true;
+            account->changed = true;
             sendMessagePlayerDetails(client->socket_fd, account->ship, sender);
             sendMessageTransactionResult(client->socket_fd, sender, qty_traded, is_buying_from_system, credit_value);
           } break;
@@ -933,6 +927,7 @@ fn void* gameLoop(void* params) {
               outgoingMessageQueuePush(state.network_send_queue, &outgoing_message);
               addSystemMessage((u8*)"MessageNewAccountCreated sent\n");
             }
+            client->needs_systems_init = true;
             MemoryZero(sbuf, SBUFLEN);
             sprintf(sbuf, "client_handle=%d, acct_id=%d\n", client_handle, existing_account->id);
             addSystemMessage((u8*)sbuf);

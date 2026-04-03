@@ -442,7 +442,25 @@ union Range1f32
 	  DWORD input_mode;
 	  DWORD output_mode;
 	} TermIOs;
+  // <poll.h> networking shim for windows
+#  define POLLIN    0x0001
+#  define POLLPRI   0x0002
+#  define POLLOUT   0x0004
+#  define POLLERR   0x0008
+#  define POLLHUP   0x0010
+#  define POLLNVAL  0x0020
+
+  typedef struct pollfd {
+      SOCKET  fd;
+      short   events;
+      short   revents;
+  } pollfd_t;
+
+  typedef int nfds_t;
+
+  int poll(struct pollfd *fds, nfds_t nfds, int timeout);
 #else
+#  include <poll.h>
 #  include <sys/socket.h>
 #  include <netinet/in.h>
 #  include <netdb.h>

@@ -451,6 +451,8 @@ fn void handleIncomingMessage(u8* message, i32 len) {
 fn void* receiveNetworkUpdates(void* net_client) {
   TCPClient client = *(TCPClient*)net_client;
   dbg("receiveNetworkUpdates() sock=%d\n", client.socket);
+  // TODO: handle the server DCing with out a segfault here.
+  // should try to reconnect with some kind of backoff
   infiniteReadTCPClient(client.socket, &should_quit, handleIncomingMessage, addSystemMessage);
   return NULL;
 }

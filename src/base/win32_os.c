@@ -326,5 +326,68 @@ bool osThreadJoin(Thread handle, u64 endt_us) {
 	return true;
 }
 
- fn void osBarrierWait(Barrier barrier) {
- }
+fn void osBarrierWait(Barrier barrier) {
+}
+
+// poll() shim using select() on windows
+int poll(struct pollfd *fds, nfds_t nfds, int timeout) {
+  assert(nfds <= FD_SETSIZE);
+
+  fd_set read_fds, write_fds, except_fds;
+  struct timeval tv;
+  int ret, i;
+  SOCKET max_fd = 0;
+
+  if (!fds && nfds > 0) {
+      WSASetLastError(WSAEFAULT);
+      return -1;
+  }
+
+  FD_ZERO(&read_fds);
+  FD_ZERO(&write_fds);
+  FD_ZERO(&except_fds);
+
+  for (i = 0; i < nfds; i++) {
+      fds[i].revents = 0;
+
+      if (fds[i].fd == INVALID_SOCKET) {
+          fds[i].revents |= POLLNVAL;
+          continue;
+      }
+
+      if (fds[i].fd > max_fd)
+          max_fd = fds[i].fd;
+
+      if (fds[i].events & POLLIN)
+          FD_SET(fds[i].fd, &read_fds);
+      if (fds[i].events & POLLOUT)
+          FD_SET(fds[i].fd, &write_fds);
+      /* always watch for errors */
+      FD_SET(fds[i].fd, &except_fds);
+  }
+
+  if (timeout >= 0) {
+      tv.tv_sec  = timeout / 1000;
+      tv.tv_usec = (timeout % 1000) * 1000;
+  }
+
+  ret = select((int)(max_fd + 1), &read_fds, &write_fds, &except_fds, &tv);
+  if (ret == SOCKET_ERROR)
+      return -1;
+  if (ret == 0)
+      return 0;
+
+  ret = 0;
+  for (i = 0; i < nfds; i++) {
+      if (fds[i].fd == INVALID_SOCKET)
+          continue;
+
+      if (FD_ISSET(fds[i].fd, &read_fds))   fds[i].revents |= POLLIN;
+      if (FD_ISSET(fds[i].fd, &write_fds))  fds[i].revents |= POLLOUT;
+      if (FD_ISSET(fds[i].fd, &except_fds)) fds[i].revents |= POLLERR;
+
+      if (fds[i].revents) ret++;
+  }
+
+  return ret;
+}
