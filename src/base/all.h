@@ -443,6 +443,7 @@ union Range1f32
 	  DWORD output_mode;
 	} TermIOs;
   // <poll.h> networking shim for windows
+#ifndef POLLIN
 #  define POLLIN    0x0001
 #  define POLLPRI   0x0002
 #  define POLLOUT   0x0004
@@ -455,6 +456,7 @@ union Range1f32
       short   events;
       short   revents;
   } pollfd_t;
+#endif
 
   typedef int nfds_t;
 
